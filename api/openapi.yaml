@@ -1,0 +1,2852 @@
+openapi: 3.1.0
+info:
+  title: E-Wallet — wallet-core API
+  version: 0.1.0
+  summary: API của wallet-core cho app-mobile, merchant và back-office.
+  license:
+    name: Proprietary — project học tập, không dùng cho tiền thật
+    identifier: LicenseRef-Proprietary
+  description: |
+    Nguồn chuẩn cho hợp đồng giữa **wallet-core** và các client. Liên quan: `docs/scope.md` (BR-xx),
+    `docs/architecture.md` §7, `docs/erd.md`.
+
+    ## Ba nhóm API
+    | Prefix | Client | Security |
+    |---|---|---|
+    | `/v1` | app-mobile (Flutter) | `customerBearer` + header `X-Device-Id` |
+    | `/merchant/v1` | merchant / merchant-sim | `merchantHmac` |
+    | `/admin/v1` | back-office-web (React) | `staffBearer` — role yêu cầu ghi ở `x-roles` |
+
+    ## Quy ước chung
+    - JSON `snake_case`. Thời gian RFC 3339 (UTC). ID public là chuỗi có prefix (`cus_`, `wal_`, `txn_`, `lnk_`, `ord_`, `chl_`, `kyc_`, `dsp_`…).
+    - **Tiền**: `amount` là số nguyên `int64` theo đồng, luôn đi kèm `currency = "VND"`. Không bao giờ dùng số thực.
+    - **Correlation**: client nên gửi `X-Request-Id` (UUID); server luôn trả lại `X-Request-Id` và có `request_id` trong body lỗi.
+    - **Phân trang**: keyset — query `cursor` + `limit`; response có `next_cursor` (null khi hết).
+
+    ## Idempotency (bắt buộc cho mọi lệnh tạo giao dịch)
+    - Header `Idempotency-Key` (≤ 128 ký tự, khuyến nghị UUIDv4), phạm vi theo khách hàng / merchant / staff.
+    - Cùng key + cùng payload ⇒ trả **đúng response đã lưu** (kể cả response lỗi nghiệp vụ). Hiệu lực 7 ngày.
+    - Cùng key + payload khác ⇒ `422 IDEMPOTENCY_KEY_REUSED`. Request trước còn đang xử lý ⇒ `409 IDEMPOTENCY_IN_PROGRESS`.
+    - Trường `pin` **không** tham gia tính hash payload.
+
+    ## Xác thực giao dịch (scope BR-35…40)
+    1. Mọi lệnh tiền gửi kèm `pin` (6 số) trong body.
+    2. Nếu cần xác thực mạnh (G > 10 tr hoặc tổng ngày > 20 tr, thiết bị mới…) server trả
+       `401 STEP_UP_REQUIRED` + `challenge_id` + `methods` (ví dụ `["OTP","FACE"]`).
+    3. Client hoàn tất challenge qua `/v1/challenges/{id}/…`.
+    4. Client gửi lại **đúng request đó với cùng `Idempotency-Key`** kèm header `X-Challenge-Id`.
+    Challenge gắn với nội dung giao dịch (loại, số tiền, người nhận), dùng một lần, hết hạn sau 5 phút.
+
+    ## Trạng thái giao dịch hiển thị cho khách hàng
+    `PENDING` (đang xử lý) · `SUCCEEDED` · `FAILED` · `REVERSED`.
+    Trạng thái nội bộ `NEEDS_RECONCILIATION` được hiển thị cho khách là `PENDING` (BR-46); back-office thấy đầy đủ.
+
+    ## Lỗi
+    Định dạng thống nhất `Error`. Danh mục mã lỗi ở `x-error-codes`. Lỗi nghiệp vụ dùng `4xx`, chỉ lỗi hệ thống mới là `5xx`.
+servers:
+  - url: http://localhost:8080
+    description: Local (docker compose)
+
+tags:
+  - name: Auth
+    description: Đăng ký, đăng nhập, token (BR-03, BR-38)
+  - name: Profile
+    description: Hồ sơ, PIN, đồng ý xử lý dữ liệu (BR-39, BR-70)
+  - name: KYC
+    description: eKYC mô phỏng (BR-04…08)
+  - name: Wallet
+    description: Ví, số dư, hạn mức, lịch sử (BR-02, 05, 25…29, 62)
+  - name: BankLinks
+    description: Liên kết ngân hàng (BR-10…14)
+  - name: Payments
+    description: Nạp, chuyển, rút, liên ngân hàng (BR-20…24, 45…50)
+  - name: QR
+    description: Thanh toán QR động (BR-51, 52)
+  - name: Challenges
+    description: Step-up OTP / khuôn mặt (BR-36, 40)
+  - name: Disputes
+    description: Tra soát, khiếu nại (BR-60)
+  - name: Merchant
+    description: API cho merchant (BR-48, 51…53)
+  - name: Admin
+    description: Back-office (BR-56…64, 74)
+  - name: Ops
+    description: Health check
+
+x-error-codes:
+  VALIDATION_ERROR: { status: 400, description: Request sai định dạng/thiếu trường }
+  UNAUTHENTICATED: { status: 401, description: Thiếu/sai/hết hạn access token }
+  STEP_UP_REQUIRED: { status: 401, description: Cần hoàn tất challenge OTP/khuôn mặt rồi gửi lại }
+  PIN_INVALID: { status: 401, description: Sai PIN; details.remaining_attempts }
+  DEVICE_NOT_BOUND: { status: 401, description: X-Device-Id không phải thiết bị active }
+  FORBIDDEN: { status: 403, description: Không đủ quyền / sai role }
+  ONBOARDING_INCOMPLETE: { status: 403, description: Chưa eKYC hoặc chưa liên kết ngân hàng (BR-05) }
+  WALLET_NOT_ACTIVE: { status: 403, description: Ví SUSPENDED/FROZEN/CLOSED }
+  NOT_FOUND: { status: 404, description: Không tồn tại hoặc không thuộc quyền truy cập }
+  IDEMPOTENCY_IN_PROGRESS: { status: 409, description: Request cùng key đang xử lý }
+  STATE_CONFLICT: { status: 409, description: Trạng thái tài nguyên không cho phép thao tác }
+  IDEMPOTENCY_KEY_REUSED: { status: 422, description: Cùng key nhưng payload khác }
+  INSUFFICIENT_FUNDS: { status: 422, description: Số dư khả dụng không đủ (BR-24) }
+  LIMIT_EXCEEDED: { status: 422, description: 'Vượt hạn mức tháng/lần; details.limit_type, details.remaining (BR-25…28)' }
+  AMOUNT_OUT_OF_RANGE: { status: 422, description: Dưới mức tối thiểu / trên mức tối đa mỗi lần }
+  RECIPIENT_INVALID: { status: 422, description: Ví nhận không tồn tại/không ACTIVE/là chính mình }
+  BANK_LINK_INVALID: { status: 422, description: Liên kết không VERIFIED hoặc không thuộc khách hàng }
+  BANK_LINK_LIMIT_REACHED: { status: 422, description: Đã đủ 3 liên kết (BR-12) }
+  LAST_BANK_LINK: { status: 422, description: Không được hủy liên kết cuối cùng (BR-13) }
+  BANK_OWNERSHIP_MISMATCH: { status: 422, description: TK/thẻ không đứng tên chủ ví (BR-10) }
+  CREDIT_CARD_NOT_ALLOWED: { status: 422, description: Không liên kết/nạp bằng thẻ tín dụng (BR-11) }
+  QR_EXPIRED: { status: 422, description: QR/đơn hàng hết hạn (BR-52) }
+  ORDER_ALREADY_PAID: { status: 422, description: Đơn đã thanh toán (BR-51) }
+  REFUND_EXCEEDS_PAID: { status: 422, description: Tổng hoàn vượt số đã thanh toán (BR-48) }
+  REFUND_WINDOW_CLOSED: { status: 422, description: Quá 90 ngày (BR-48) }
+  KYC_REJECTED: { status: 422, description: eKYC không đạt }
+  KYC_ATTEMPTS_EXCEEDED: { status: 422, description: Quá 3 lần/ngày (BR-06) }
+  UNDERAGE: { status: 422, description: Chưa đủ 18 tuổi (BR-01) }
+  ID_ALREADY_REGISTERED: { status: 422, description: CCCD đã gắn khách hàng khác }
+  WALLET_NOT_EMPTY: { status: 422, description: Phải rút hết số dư/không còn giao dịch pending trước khi đóng ví (BR-62) }
+  DISPUTE_WINDOW_CLOSED: { status: 422, description: Quá 60 ngày (BR-60) }
+  CHALLENGE_INVALID: { status: 422, description: Challenge sai/hết hạn/đã dùng/không khớp giao dịch }
+  OTP_INVALID: { status: 422, description: Sai OTP; details.remaining_attempts }
+  MAKER_CHECKER_VIOLATION: { status: 422, description: Người duyệt trùng người tạo (BR-64) }
+  PIN_LOCKED: { status: 423, description: PIN bị khóa; details.locked_until (BR-39) }
+  RATE_LIMITED: { status: 429, description: Quá nhiều request; header Retry-After }
+  INTERNAL_ERROR: { status: 500, description: Lỗi hệ thống }
+  SERVICE_UNAVAILABLE: { status: 503, description: Phụ thuộc tạm không khả dụng }
+
+paths:
+  # ───────────────────────────── Ops ─────────────────────────────
+  /healthz:
+    get:
+      tags: [Ops]
+      operationId: healthz
+      summary: Liveness probe
+      security: []
+      responses:
+        '200': { description: Process sống }
+  /readyz:
+    get:
+      tags: [Ops]
+      operationId: readyz
+      summary: Readiness probe
+      security: []
+      responses:
+        '200': { description: 'Sẵn sàng (DB, object storage OK)' }
+        '503': { description: Chưa sẵn sàng }
+
+  # ───────────────────────────── Auth ─────────────────────────────
+  /v1/auth/register/otp:
+    post:
+      tags: [Auth]
+      operationId: requestRegisterOtp
+      summary: Gửi OTP tới SĐT để đăng ký
+      x-br: [BR-03]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone]
+              properties:
+                phone: { $ref: '#/components/schemas/Phone' }
+      responses:
+        '202':
+          description: Đã gửi OTP (luôn trả 202 kể cả khi SĐT đã đăng ký, để chống dò SĐT)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [verification_id, expires_at]
+                properties:
+                  verification_id: { type: string }
+                  expires_at: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/auth/register/verify:
+    post:
+      tags: [Auth]
+      operationId: verifyRegisterOtp
+      summary: Xác thực OTP, tạo khách hàng (REGISTERED), gắn thiết bị, trả token
+      x-br: [BR-03, BR-38]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [verification_id, otp, device]
+              properties:
+                verification_id: { type: string }
+                otp: { $ref: '#/components/schemas/Otp' }
+                device: { $ref: '#/components/schemas/DeviceInfo' }
+      responses:
+        '201':
+          description: Đăng ký thành công. Bước tiếp theo — consents → đặt PIN → eKYC → liên kết NH.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Đăng nhập bằng SĐT + PIN
+      description: |
+        Thiết bị khác thiết bị đang active ⇒ `401 STEP_UP_REQUIRED` (OTP + khuôn mặt). Hoàn tất challenge rồi gọi lại
+        với `X-Challenge-Id`; thiết bị mới được gắn, thiết bị cũ bị thu hồi, áp hạn mức 24h đầu (BR-38).
+      x-br: [BR-38, BR-39]
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/ChallengeId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, pin, device]
+              properties:
+                phone: { $ref: '#/components/schemas/Phone' }
+                pin: { $ref: '#/components/schemas/Pin' }
+                device: { $ref: '#/components/schemas/DeviceInfo' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+        '401': { $ref: '#/components/responses/UnauthorizedOrStepUp' }
+        '423': { $ref: '#/components/responses/Locked' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/auth/token/refresh:
+    post:
+      tags: [Auth]
+      operationId: refreshToken
+      summary: Đổi refresh token lấy cặp token mới (xoay vòng)
+      description: Dùng lại refresh token cũ ⇒ thu hồi cả chuỗi token của thiết bị.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: Đăng xuất, thu hồi refresh token của thiết bị
+      security: [{ customerBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '204': { description: Đã thu hồi refresh token của thiết bị }
+
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  # ───────────────────────────── Profile ─────────────────────────────
+  /v1/me:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    get:
+      tags: [Profile]
+      operationId: getMe
+      summary: Thông tin khách hàng và các bước onboarding còn thiếu
+      security: [{ customerBearer: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Customer' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/me/pin:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    put:
+      tags: [Profile]
+      operationId: setPin
+      summary: Đặt PIN lần đầu hoặc đổi PIN
+      description: Đổi PIN yêu cầu `current_pin`. Đặt lần đầu chỉ được khi chưa có PIN.
+      x-br: [BR-35, BR-39]
+      security: [{ customerBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_pin]
+              properties:
+                current_pin: { $ref: '#/components/schemas/Pin' }
+                new_pin: { $ref: '#/components/schemas/Pin' }
+      responses:
+        '204': { description: Đã cập nhật }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '423': { $ref: '#/components/responses/Locked' }
+
+  /v1/me/pin/reset:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      - $ref: '#/components/parameters/ChallengeId'
+    post:
+      tags: [Profile]
+      operationId: resetPin
+      summary: Đặt lại PIN khi quên/bị khóa cứng — luôn yêu cầu step-up OTP + khuôn mặt
+      x-br: [BR-39]
+      security: [{ customerBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_pin]
+              properties:
+                new_pin: { $ref: '#/components/schemas/Pin' }
+      responses:
+        '204': { description: 'Đã đặt lại, mở khóa PIN' }
+        '401': { $ref: '#/components/responses/UnauthorizedOrStepUp' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/me/consents:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    get:
+      tags: [Profile]
+      operationId: listConsents
+      summary: Danh sách đồng ý đã cấp và phiên bản điều khoản hiện hành
+      security: [{ customerBearer: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Consent' }
+                  required_policy_versions:
+                    type: object
+                    additionalProperties: { type: string }
+                    description: Phiên bản điều khoản hiện hành theo từng consent_type
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Profile]
+      operationId: grantConsents
+      summary: Ghi nhận đồng ý (đồng ý sinh trắc học là mục riêng)
+      x-br: [BR-70]
+      security: [{ customerBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [consents]
+              properties:
+                consents:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [consent_type, policy_version]
+                    properties:
+                      consent_type: { $ref: '#/components/schemas/ConsentType' }
+                      policy_version: { type: string }
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Consent' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/me/consents/{consent_type}:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      - name: consent_type
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/ConsentType' }
+    delete:
+      tags: [Profile]
+      operationId: withdrawConsent
+      summary: Rút lại đồng ý
+      description: |
+        Rút `TERMS`, `PERSONAL_DATA` hoặc `BIOMETRIC_DATA` khiến ví không thể tiếp tục giao dịch;
+        app phải cảnh báo và hướng dẫn đóng ví.
+      x-br: [BR-70]
+      security: [{ customerBearer: [] }]
+      responses:
+        '204': { description: Đã rút }
+
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  # ───────────────────────────── KYC ─────────────────────────────
+  /v1/kyc/sessions:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    post:
+      tags: [KYC]
+      operationId: createKycSession
+      summary: Tạo phiên eKYC
+      description: Yêu cầu đã đồng ý `PERSONAL_DATA` và `BIOMETRIC_DATA`.
+      x-br: [BR-04, BR-06, BR-07, BR-70]
+      security: [{ customerBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [purpose]
+              properties:
+                purpose: { type: string, enum: [ONBOARDING, RE_KYC] }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KycSession' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/kyc/sessions/{kyc_session_id}:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      - $ref: '#/components/parameters/KycSessionId'
+    get:
+      tags: [KYC]
+      operationId: getKycSession
+      summary: Xem trạng thái phiên eKYC
+      security: [{ customerBearer: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KycSession' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/kyc/sessions/{kyc_session_id}/documents/{kind}:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      - $ref: '#/components/parameters/KycSessionId'
+      - name: kind
+        in: path
+        required: true
+        schema: { type: string, enum: [ID_FRONT, ID_BACK, SELFIE, LIVENESS_VIDEO, CHIP_DATA] }
+    put:
+      tags: [KYC]
+      operationId: uploadKycDocument
+      summary: Upload ảnh/video/dữ liệu chip (ghi đè nếu upload lại trước khi submit)
+      description: Tối đa 10 MB. Định dạng xác định theo magic bytes (JPEG/PNG/MP4; CHIP_DATA là JSON đã ký từ app đọc NFC).
+      security: [{ customerBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, contentMediaType: application/octet-stream }
+      responses:
+        '200':
+          description: Đã lưu
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KycSession' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { description: File quá lớn }
+
+  /v1/kyc/sessions/{kyc_session_id}/submit:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      - $ref: '#/components/parameters/KycSessionId'
+    post:
+      tags: [KYC]
+      operationId: submitKycSession
+      summary: Gửi hồ sơ để xử lý bất đồng bộ (OCR → liveness → face match → chip verify)
+      description: Trả `PROCESSING`; client poll `GET` hoặc nhận push. Kết quả cuối APPROVED/REJECTED/MANUAL_REVIEW.
+      x-br: [BR-04, BR-06]
+      security: [{ customerBearer: [] }]
+      responses:
+        '202':
+          description: Đang xử lý
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KycSession' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  # ───────────────────────────── Wallet ─────────────────────────────
+  /v1/wallet:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    get:
+      tags: [Wallet]
+      operationId: getWallet
+      summary: Ví của khách hàng, số dư khả dụng / đang giữ, trạng thái
+      x-br: [BR-02, BR-05, BR-50]
+      security: [{ customerBearer: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Wallet' }
+
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /v1/wallet/limits:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    get:
+      tags: [Wallet]
+      operationId: getWalletLimits
+      summary: Hạn mức đã dùng / còn lại
+      x-br: [BR-25, BR-26, BR-28, BR-36, BR-38]
+      security: [{ customerBearer: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WalletLimits' }
+
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /v1/wallet/activities:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    get:
+      tags: [Wallet]
+      operationId: listWalletActivities
+      summary: Lịch sử giao dịch (keyset, mới nhất trước)
+      security: [{ customerBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: type
+          in: query
+          schema: { $ref: '#/components/schemas/PaymentType' }
+        - name: direction
+          in: query
+          schema: { type: string, enum: [IN, OUT] }
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Activity' }
+                  next_cursor: { $ref: '#/components/schemas/NextCursor' }
+
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /v1/wallet/close:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/ChallengeId'
+    post:
+      tags: [Wallet]
+      operationId: closeWallet
+      summary: Đóng ví — số dư phải bằng 0, không còn giao dịch pending/hold
+      x-br: [BR-62]
+      security: [{ customerBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pin]
+              properties:
+                pin: { $ref: '#/components/schemas/Pin' }
+                reason: { type: string, maxLength: 500 }
+      responses:
+        '200':
+          description: Ví CLOSED
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Wallet' }
+        '401': { $ref: '#/components/responses/UnauthorizedOrStepUp' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/wallets/lookup:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    get:
+      tags: [Wallet]
+      operationId: lookupRecipient
+      summary: Tra người nhận theo SĐT trước khi chuyển — chỉ trả tên đã che
+      x-br: [BR-23]
+      security: [{ customerBearer: [] }]
+      parameters:
+        - name: phone
+          in: query
+          required: true
+          schema: { $ref: '#/components/schemas/Phone' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecipientLookup' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  # ───────────────────────────── Bank links ─────────────────────────────
+  /v1/banks:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    get:
+      tags: [BankLinks]
+      operationId: listBanks
+      summary: Danh sách ngân hàng hỗ trợ (giả lập)
+      security: [{ customerBearer: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Bank' }
+
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /v1/bank-links:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    get:
+      tags: [BankLinks]
+      operationId: listBankLinks
+      summary: Danh sách liên kết ngân hàng
+      security: [{ customerBearer: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/BankLink' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [BankLinks]
+      operationId: createBankLink
+      summary: Bắt đầu liên kết TK/thẻ ghi nợ chính chủ — ngân hàng gửi OTP
+      description: Yêu cầu eKYC đã KYC_VERIFIED. Họ tên + CCCD lấy từ hồ sơ đã xác minh, client không gửi.
+      x-br: [BR-10, BR-11, BR-12, BR-14]
+      security: [{ customerBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bank_code, source_type, number]
+              properties:
+                bank_code: { type: string, example: VCB }
+                source_type: { type: string, enum: [ACCOUNT, DEBIT_CARD] }
+                number: { type: string, description: Số TK hoặc số thẻ ghi nợ }
+      responses:
+        '201':
+          description: OTP đã gửi
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BankLink' }
+        '202':
+          description: Ngân hàng chưa phản hồi — liên kết PENDING, client poll GET
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BankLink' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/bank-links/{bank_link_id}:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      - $ref: '#/components/parameters/BankLinkId'
+    get:
+      tags: [BankLinks]
+      operationId: getBankLink
+      summary: Xem một liên kết ngân hàng (poll khi PENDING)
+      security: [{ customerBearer: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BankLink' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [BankLinks]
+      operationId: deleteBankLink
+      summary: Hủy liên kết (không được hủy liên kết cuối cùng khi ví còn hoạt động)
+      x-br: [BR-13]
+      security: [{ customerBearer: [] }]
+      responses:
+        '204': { description: Đã hủy }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/bank-links/{bank_link_id}/confirm:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      - $ref: '#/components/parameters/BankLinkId'
+    post:
+      tags: [BankLinks]
+      operationId: confirmBankLink
+      summary: Nhập OTP ngân hàng để hoàn tất liên kết
+      description: Liên kết đầu tiên VERIFIED + eKYC đạt ⇒ ví chuyển ACTIVE (BR-05).
+      x-br: [BR-05, BR-14]
+      security: [{ customerBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [otp]
+              properties:
+                otp: { $ref: '#/components/schemas/Otp' }
+      responses:
+        '200':
+          description: VERIFIED
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BankLink' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/bank-links/{bank_link_id}/default:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      - $ref: '#/components/parameters/BankLinkId'
+    put:
+      tags: [BankLinks]
+      operationId: setDefaultBankLink
+      summary: Đặt liên kết mặc định
+      security: [{ customerBearer: [] }]
+      responses:
+        '204': { description: OK }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  # ───────────────────────────── Payments ─────────────────────────────
+  /v1/topups:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/ChallengeId'
+    post:
+      tags: [Payments]
+      operationId: createTopup
+      summary: Nạp tiền từ nguồn đã liên kết
+      description: Bất đồng bộ — trả `202 PENDING`; ví chỉ được ghi có khi ngân hàng xác nhận (BR-49).
+      x-br: [BR-20, BR-35, BR-36, BR-37, BR-49]
+      security: [{ customerBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TopupRequest' }
+            example: { bank_link_id: lnk_0192a3b4c5d6, amount: 500000, currency: VND, pin: '123456' }
+      responses:
+        '202': { $ref: '#/components/responses/PaymentAccepted' }
+        '401': { $ref: '#/components/responses/UnauthorizedOrStepUp' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '423': { $ref: '#/components/responses/Locked' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/transfers:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/ChallengeId'
+    post:
+      tags: [Payments]
+      operationId: createTransfer
+      summary: Chuyển tiền ví–ví (đồng bộ, tức thời, không hủy được)
+      x-br: [BR-23, BR-24, BR-25, BR-28, BR-29, BR-35, BR-36, BR-47]
+      security: [{ customerBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TransferRequest' }
+            example:
+              recipient: { phone: '+84901234567' }
+              amount: 200000
+              currency: VND
+              description: Tra tien com
+              pin: '123456'
+      responses:
+        '201': { $ref: '#/components/responses/PaymentCreated' }
+        '401': { $ref: '#/components/responses/UnauthorizedOrStepUp' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '423': { $ref: '#/components/responses/Locked' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/withdrawals:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/ChallengeId'
+    post:
+      tags: [Payments]
+      operationId: createWithdrawal
+      summary: Rút tiền về TK/thẻ đã liên kết
+      description: Giữ chỗ (hold) số tiền ngay; trả `202 PENDING`. Không tính vào hạn mức tháng (BR-25).
+      x-br: [BR-21, BR-28, BR-35, BR-36, BR-37, BR-50]
+      security: [{ customerBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WithdrawalRequest' }
+      responses:
+        '202': { $ref: '#/components/responses/PaymentAccepted' }
+        '401': { $ref: '#/components/responses/UnauthorizedOrStepUp' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '423': { $ref: '#/components/responses/Locked' }
+
+  /v1/interbank-transfers:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/ChallengeId'
+    post:
+      tags: [Payments]
+      operationId: createInterbankTransfer
+      summary: Chuyển từ ví tới TK ngân hàng bất kỳ
+      description: Giữ chỗ số tiền, trả `202 PENDING`. Tính vào hạn mức tháng (BR-25). Gửi kèm thông tin người gửi (BR-22).
+      x-br: [BR-22, BR-25, BR-28, BR-35, BR-36, BR-50]
+      security: [{ customerBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InterbankTransferRequest' }
+      responses:
+        '202': { $ref: '#/components/responses/PaymentAccepted' }
+        '401': { $ref: '#/components/responses/UnauthorizedOrStepUp' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '423': { $ref: '#/components/responses/Locked' }
+
+  /v1/payments/{payment_id}:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      - $ref: '#/components/parameters/PaymentId'
+    get:
+      tags: [Payments]
+      operationId: getPayment
+      summary: Xem chi tiết/trạng thái giao dịch (dùng để poll giao dịch PENDING)
+      x-br: [BR-45, BR-46]
+      security: [{ customerBearer: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Payment' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ───────────────────────────── QR ─────────────────────────────
+  /v1/qr/{qr_token}:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      - name: qr_token
+        in: path
+        required: true
+        schema: { type: string, minLength: 20, maxLength: 64 }
+    get:
+      tags: [QR]
+      operationId: resolveQr
+      summary: Lấy thông tin đơn hàng từ token trong QR (không tin dữ liệu trong QR)
+      x-br: [BR-52, BR-53]
+      security: [{ customerBearer: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QrInfo' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/qr-payments:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/ChallengeId'
+    post:
+      tags: [QR]
+      operationId: payQr
+      summary: Thanh toán đơn hàng QR (đồng bộ)
+      description: |
+        Số tiền lấy từ đơn hàng phía server; `amount` trong request chỉ để đối chiếu với số tiền người dùng đã thấy —
+        lệch ⇒ `409 STATE_CONFLICT`. Mỗi đơn chỉ thanh toán thành công một lần (BR-51).
+      x-br: [BR-25, BR-26, BR-35, BR-36, BR-51, BR-52]
+      security: [{ customerBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QrPaymentRequest' }
+      responses:
+        '201': { $ref: '#/components/responses/PaymentCreated' }
+        '401': { $ref: '#/components/responses/UnauthorizedOrStepUp' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '423': { $ref: '#/components/responses/Locked' }
+
+  # ───────────────────────────── Challenges ─────────────────────────────
+  /v1/challenges/{challenge_id}:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      - $ref: '#/components/parameters/ChallengePath'
+    get:
+      tags: [Challenges]
+      operationId: getChallenge
+      summary: Xem trạng thái challenge
+      security: [{ customerBearer: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Challenge' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/challenges/{challenge_id}/otp:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      - $ref: '#/components/parameters/ChallengePath'
+    post:
+      tags: [Challenges]
+      operationId: verifyChallengeOtp
+      summary: Xác minh OTP của challenge
+      description: |
+        Với challenge của luồng `login` (thiết bị mới) — client chưa có token; gọi không kèm Authorization,
+        challenge được xác định bởi `challenge_id` + `X-Device-Id`.
+      security: [{ customerBearer: [] }, {}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [otp]
+              properties:
+                otp: { $ref: '#/components/schemas/Otp' }
+      responses:
+        '200':
+          description: Trạng thái challenge sau khi xác minh
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Challenge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/challenges/{challenge_id}/otp/resend:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      - $ref: '#/components/parameters/ChallengePath'
+    post:
+      tags: [Challenges]
+      operationId: resendChallengeOtp
+      summary: Gửi lại OTP của challenge
+      security: [{ customerBearer: [] }, {}]
+      responses:
+        '202': { description: Đã gửi lại (tối đa 3 lần/challenge) }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/challenges/{challenge_id}/face:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      - $ref: '#/components/parameters/ChallengePath'
+    post:
+      tags: [Challenges]
+      operationId: verifyChallengeFace
+      summary: Gửi selfie/liveness để so khớp với khuôn mặt đã eKYC (mock)
+      security: [{ customerBearer: [] }, {}]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [selfie]
+              properties:
+                selfie: { type: string, contentMediaType: image/jpeg }
+                liveness_video: { type: string, contentMediaType: video/mp4 }
+      responses:
+        '200':
+          description: Trạng thái challenge sau khi xác minh
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Challenge' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  # ───────────────────────────── Disputes ─────────────────────────────
+  /v1/disputes:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    get:
+      tags: [Disputes]
+      operationId: listMyDisputes
+      summary: Danh sách khiếu nại của tôi
+      security: [{ customerBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Dispute' }
+                  next_cursor: { $ref: '#/components/schemas/NextCursor' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Disputes]
+      operationId: createDispute
+      summary: Gửi tra soát/khiếu nại (trong 60 ngày kể từ giao dịch)
+      x-br: [BR-47, BR-60]
+      security: [{ customerBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [payment_id, type, description]
+              properties:
+                payment_id: { type: string }
+                type: { $ref: '#/components/schemas/DisputeType' }
+                description: { type: string, minLength: 10, maxLength: 2000 }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Dispute' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/disputes/{dispute_id}:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      - $ref: '#/components/parameters/DisputeId'
+    get:
+      tags: [Disputes]
+      operationId: getMyDispute
+      summary: Xem một khiếu nại
+      security: [{ customerBearer: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Dispute' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ───────────────────────────── Merchant ─────────────────────────────
+  /merchant/v1/orders:
+    post:
+      tags: [Merchant]
+      operationId: merchantCreateOrder
+      summary: Tạo đơn hàng + QR động (hết hạn sau 15 phút)
+      x-br: [BR-51, BR-52, BR-53]
+      security: [{ merchantHmac: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateOrderRequest' }
+            example: { merchant_order_id: order_20261017_001, amount: 125000, currency: VND, description: Ve xem phim }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /merchant/v1/orders/{merchant_order_id}:
+    parameters:
+      - $ref: '#/components/parameters/MerchantOrderId'
+    get:
+      tags: [Merchant]
+      operationId: merchantGetOrder
+      summary: Tra cứu trạng thái đơn (dùng khi chưa nhận được callback)
+      x-br: [BR-51]
+      security: [{ merchantHmac: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /merchant/v1/orders/{merchant_order_id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/MerchantOrderId'
+    post:
+      tags: [Merchant]
+      operationId: merchantCancelOrder
+      summary: Hủy đơn chưa thanh toán
+      security: [{ merchantHmac: [] }]
+      responses:
+        '200':
+          description: CANCELLED
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /merchant/v1/orders/{merchant_order_id}/refunds:
+    parameters:
+      - $ref: '#/components/parameters/MerchantOrderId'
+    post:
+      tags: [Merchant]
+      operationId: merchantCreateRefund
+      summary: Hoàn tiền (một phần/toàn bộ, trong 90 ngày)
+      x-br: [BR-48]
+      security: [{ merchantHmac: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [merchant_refund_id, amount, currency]
+              properties:
+                merchant_refund_id: { type: string, maxLength: 64 }
+                amount: { $ref: '#/components/schemas/Amount' }
+                currency: { $ref: '#/components/schemas/Currency' }
+                reason: { type: string, maxLength: 255 }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Refund' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /merchant/v1/orders/{merchant_order_id}/refunds/{merchant_refund_id}:
+    parameters:
+      - $ref: '#/components/parameters/MerchantOrderId'
+      - name: merchant_refund_id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Merchant]
+      operationId: merchantGetRefund
+      summary: Tra cứu trạng thái hoàn tiền
+      security: [{ merchantHmac: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Refund' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ───────────────────────────── Admin ─────────────────────────────
+  /admin/v1/auth/login:
+    post:
+      tags: [Admin]
+      operationId: adminLogin
+      summary: Đăng nhập back-office
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, format: password }
+                totp: { type: string, pattern: '^[0-9]{6}$' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffTokenPair' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /admin/v1/auth/token/refresh:
+    post:
+      tags: [Admin]
+      operationId: adminRefreshToken
+      summary: Làm mới token back-office
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffTokenPair' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /admin/v1/customers:
+    get:
+      tags: [Admin]
+      operationId: adminSearchCustomers
+      summary: Tìm khách hàng theo SĐT / mã ví / mã khách hàng
+      x-roles: [SUPPORT, OPERATOR, CHECKER, ADMIN]
+      security: [{ staffBearer: [] }]
+      parameters:
+        - { name: phone, in: query, schema: { $ref: '#/components/schemas/Phone' } }
+        - { name: wallet_id, in: query, schema: { type: string } }
+        - { name: customer_id, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AdminCustomer' }
+                  next_cursor: { $ref: '#/components/schemas/NextCursor' }
+
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /admin/v1/customers/{customer_id}:
+    parameters:
+      - { name: customer_id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Admin]
+      operationId: adminGetCustomer
+      summary: Chi tiết khách hàng, ví, liên kết, eKYC (CCCD đã che)
+      x-roles: [SUPPORT, OPERATOR, CHECKER, ADMIN]
+      security: [{ staffBearer: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminCustomerDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/v1/wallets/{wallet_id}/freeze:
+    parameters:
+      - $ref: '#/components/parameters/WalletId'
+    post:
+      tags: [Admin]
+      operationId: adminFreezeWallet
+      summary: Phong tỏa ví (theo yêu cầu khách hàng / cơ quan có thẩm quyền)
+      x-roles: [OPERATOR, ADMIN]
+      x-br: [BR-06, BR-64]
+      security: [{ staffBearer: [] }]
+      requestBody: { $ref: '#/components/requestBodies/ReasonRequired' }
+      responses:
+        '200':
+          description: FROZEN
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Wallet' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /admin/v1/wallets/{wallet_id}/unfreeze:
+    parameters:
+      - $ref: '#/components/parameters/WalletId'
+    post:
+      tags: [Admin]
+      operationId: adminUnfreezeWallet
+      summary: Gỡ phong tỏa ví
+      x-roles: [OPERATOR, ADMIN]
+      security: [{ staffBearer: [] }]
+      requestBody: { $ref: '#/components/requestBodies/ReasonRequired' }
+      responses:
+        '200':
+          description: ACTIVE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Wallet' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /admin/v1/wallets/{wallet_id}/reactivate:
+    parameters:
+      - $ref: '#/components/parameters/WalletId'
+    post:
+      tags: [Admin]
+      operationId: adminReactivateWallet
+      summary: Gỡ SUSPENDED (sau khi xử lý nghi ngờ gian lận / chênh lệch)
+      x-roles: [OPERATOR, ADMIN]
+      x-br: [BR-61]
+      security: [{ staffBearer: [] }]
+      requestBody: { $ref: '#/components/requestBodies/ReasonRequired' }
+      responses:
+        '200':
+          description: ACTIVE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Wallet' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /admin/v1/payments:
+    get:
+      tags: [Admin]
+      operationId: adminListPayments
+      summary: Tìm kiếm giao dịch
+      x-roles: [SUPPORT, OPERATOR, CHECKER, ADMIN]
+      security: [{ staffBearer: [] }]
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/PaymentStatusInternal' } }
+        - { name: type, in: query, schema: { $ref: '#/components/schemas/PaymentType' } }
+        - { name: customer_id, in: query, schema: { type: string } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - name: pending_longer_than_minutes
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AdminPayment' }
+                  next_cursor: { $ref: '#/components/schemas/NextCursor' }
+
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /admin/v1/payments/{payment_id}:
+    parameters:
+      - $ref: '#/components/parameters/PaymentId'
+    get:
+      tags: [Admin]
+      operationId: adminGetPayment
+      summary: Chi tiết giao dịch kèm lịch sử trạng thái, bank operations, bút toán
+      x-roles: [SUPPORT, OPERATOR, CHECKER, ADMIN]
+      security: [{ staffBearer: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminPaymentDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/v1/payments/{payment_id}/resolve:
+    parameters:
+      - $ref: '#/components/parameters/PaymentId'
+    post:
+      tags: [Admin]
+      operationId: adminResolvePayment
+      summary: Chốt kết quả giao dịch NEEDS_RECONCILIATION theo bằng chứng từ ngân hàng
+      description: Chỉ áp dụng cho trạng thái NEEDS_RECONCILIATION. Hệ thống tra cứu lại corebank trước khi chấp nhận.
+      x-roles: [OPERATOR, ADMIN]
+      x-br: [BR-46, BR-58]
+      security: [{ staffBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [outcome, reason]
+              properties:
+                outcome: { type: string, enum: [SUCCEEDED, FAILED] }
+                corebank_ref: { type: string }
+                reason: { $ref: '#/components/schemas/Reason' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminPaymentDetail' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /admin/v1/kyc/sessions:
+    get:
+      tags: [Admin]
+      operationId: adminListKycSessions
+      summary: Danh sách phiên eKYC (lọc MANUAL_REVIEW)
+      x-roles: [SUPPORT, OPERATOR, ADMIN]
+      security: [{ staffBearer: [] }]
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/KycStatus' } }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AdminKycSession' }
+                  next_cursor: { $ref: '#/components/schemas/NextCursor' }
+
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /admin/v1/kyc/sessions/{kyc_session_id}:
+    parameters:
+      - $ref: '#/components/parameters/KycSessionId'
+    get:
+      tags: [Admin]
+      operationId: adminGetKycSession
+      summary: Chi tiết phiên eKYC kèm kết quả từng check
+      x-roles: [SUPPORT, OPERATOR, ADMIN]
+      security: [{ staffBearer: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminKycSession' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/v1/kyc/sessions/{kyc_session_id}/decision:
+    parameters:
+      - $ref: '#/components/parameters/KycSessionId'
+    post:
+      tags: [Admin]
+      operationId: adminDecideKyc
+      summary: Duyệt/từ chối hồ sơ MANUAL_REVIEW
+      x-roles: [OPERATOR, ADMIN]
+      x-br: [BR-06]
+      security: [{ staffBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision, reason]
+              properties:
+                decision: { type: string, enum: [APPROVE, REJECT] }
+                reason: { $ref: '#/components/schemas/Reason' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminKycSession' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /admin/v1/kyc/documents/{document_id}/view-url:
+    parameters:
+      - { name: document_id, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [Admin]
+      operationId: adminCreateKycDocumentViewUrl
+      summary: Tạo pre-signed URL xem ảnh CCCD/selfie (5 phút, ghi audit)
+      x-roles: [OPERATOR, ADMIN]
+      x-br: [BR-71]
+      security: [{ staffBearer: [] }]
+      requestBody: { $ref: '#/components/requestBodies/ReasonRequired' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url, expires_at]
+                properties:
+                  url: { type: string, format: uri }
+                  expires_at: { type: string, format: date-time }
+
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /admin/v1/recon/runs:
+    get:
+      tags: [Admin]
+      operationId: adminListReconRuns
+      summary: Danh sách lần đối soát
+      x-roles: [OPERATOR, CHECKER, ADMIN]
+      x-br: [BR-56, BR-58]
+      security: [{ staffBearer: [] }]
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ReconRun' }
+
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /admin/v1/recon/runs/{recon_run_id}/items:
+    parameters:
+      - { name: recon_run_id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [Admin]
+      operationId: adminListReconItems
+      summary: Các chênh lệch của một lần đối soát
+      x-roles: [OPERATOR, CHECKER, ADMIN]
+      security: [{ staffBearer: [] }]
+      parameters:
+        - { name: resolution_status, in: query, schema: { $ref: '#/components/schemas/ReconResolutionStatus' } }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ReconItem' }
+                  next_cursor: { $ref: '#/components/schemas/NextCursor' }
+
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /admin/v1/recon/items/{recon_item_id}/resolve:
+    parameters:
+      - { name: recon_item_id, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [Admin]
+      operationId: adminResolveReconItem
+      summary: Đóng item không cần điều chỉnh tiền (đã tự khớp, sai số liệu ngân hàng…)
+      description: Nếu cần thay đổi tiền, tạo adjustment (`POST /admin/v1/adjustments`) gắn `recon_item_id`.
+      x-roles: [OPERATOR, ADMIN]
+      security: [{ staffBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resolution_status, reason]
+              properties:
+                resolution_status: { type: string, enum: [RESOLVED, WRITTEN_OFF] }
+                reason: { $ref: '#/components/schemas/Reason' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReconItem' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /admin/v1/adjustments:
+    get:
+      tags: [Admin]
+      operationId: adminListAdjustments
+      summary: Danh sách điều chỉnh tài chính
+      x-roles: [OPERATOR, CHECKER, ADMIN]
+      security: [{ staffBearer: [] }]
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/AdjustmentStatus' } }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Adjustment' }
+                  next_cursor: { $ref: '#/components/schemas/NextCursor' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Admin]
+      operationId: adminCreateAdjustment
+      summary: Tạo điều chỉnh tài chính (DRAFT) — maker
+      x-roles: [OPERATOR]
+      x-br: [BR-58, BR-64]
+      security: [{ staffBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdjustmentInput' }
+      responses:
+        '201':
+          description: DRAFT
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Adjustment' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /admin/v1/adjustments/{adjustment_id}/submit:
+    parameters:
+      - $ref: '#/components/parameters/AdjustmentId'
+    post:
+      tags: [Admin]
+      operationId: adminSubmitAdjustment
+      summary: Gửi duyệt (DRAFT → PENDING_APPROVAL)
+      x-roles: [OPERATOR]
+      security: [{ staffBearer: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Adjustment' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /admin/v1/adjustments/{adjustment_id}/approve:
+    parameters:
+      - $ref: '#/components/parameters/AdjustmentId'
+    post:
+      tags: [Admin]
+      operationId: adminApproveAdjustment
+      summary: Duyệt và ghi bút toán (checker ≠ maker) — PENDING_APPROVAL → POSTED
+      x-roles: [CHECKER]
+      x-br: [BR-64]
+      security: [{ staffBearer: [] }]
+      requestBody: { $ref: '#/components/requestBodies/ReasonRequired' }
+      responses:
+        '200':
+          description: POSTED
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Adjustment' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /admin/v1/adjustments/{adjustment_id}/reject:
+    parameters:
+      - $ref: '#/components/parameters/AdjustmentId'
+    post:
+      tags: [Admin]
+      operationId: adminRejectAdjustment
+      summary: Từ chối điều chỉnh (checker)
+      x-roles: [CHECKER]
+      security: [{ staffBearer: [] }]
+      requestBody: { $ref: '#/components/requestBodies/ReasonRequired' }
+      responses:
+        '200':
+          description: REJECTED
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Adjustment' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /admin/v1/aml-alerts:
+    get:
+      tags: [Admin]
+      operationId: adminListAmlAlerts
+      summary: Danh sách cảnh báo AML
+      x-roles: [OPERATOR, ADMIN]
+      x-br: [BR-74]
+      security: [{ staffBearer: [] }]
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/AmlAlertStatus' } }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AmlAlert' }
+                  next_cursor: { $ref: '#/components/schemas/NextCursor' }
+
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /admin/v1/aml-alerts/{aml_alert_id}:
+    parameters:
+      - { name: aml_alert_id, in: path, required: true, schema: { type: string } }
+    patch:
+      tags: [Admin]
+      operationId: adminUpdateAmlAlert
+      summary: Cập nhật xử lý alert; `suspend_wallet = true` ⇒ ví SUSPENDED
+      x-roles: [OPERATOR, ADMIN]
+      x-br: [BR-61, BR-74]
+      security: [{ staffBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                status: { $ref: '#/components/schemas/AmlAlertStatus' }
+                assignee_id: { type: string }
+                suspend_wallet: { type: boolean, default: false }
+                notes: { type: string, maxLength: 4000 }
+                reason: { $ref: '#/components/schemas/Reason' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AmlAlert' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /admin/v1/disputes:
+    get:
+      tags: [Admin]
+      operationId: adminListDisputes
+      summary: Danh sách khiếu nại
+      x-roles: [SUPPORT, OPERATOR, ADMIN]
+      security: [{ staffBearer: [] }]
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/DisputeStatus' } }
+        - name: overdue
+          in: query
+          schema: { type: boolean }
+          description: Chỉ lấy khiếu nại quá hạn 15 ngày làm việc
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Dispute' }
+                  next_cursor: { $ref: '#/components/schemas/NextCursor' }
+
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /admin/v1/disputes/{dispute_id}:
+    parameters:
+      - $ref: '#/components/parameters/DisputeId'
+    patch:
+      tags: [Admin]
+      operationId: adminUpdateDispute
+      summary: Cập nhật xử lý khiếu nại; hoàn tiền thực hiện qua adjustment
+      x-roles: [SUPPORT, OPERATOR, ADMIN]
+      x-br: [BR-60]
+      security: [{ staffBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { $ref: '#/components/schemas/DisputeStatus' }
+                resolution: { type: string, maxLength: 4000 }
+                adjustment_id: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Dispute' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /admin/v1/settings:
+    get:
+      tags: [Admin]
+      operationId: adminListSettings
+      summary: Tham số cấu hình nghiệp vụ (scope §5)
+      x-roles: [OPERATOR, CHECKER, ADMIN]
+      security: [{ staffBearer: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Setting' }
+
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /admin/v1/settings/{key}:
+    parameters:
+      - { name: key, in: path, required: true, schema: { type: string, example: limit.monthly_general } }
+    put:
+      tags: [Admin]
+      operationId: adminUpdateSetting
+      summary: Sửa tham số cấu hình (ghi audit)
+      x-roles: [ADMIN]
+      security: [{ staffBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value, reason]
+              properties:
+                value: { description: Giá trị JSON theo kiểu của key }
+                reason: { $ref: '#/components/schemas/Reason' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Setting' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /admin/v1/audit-logs:
+    get:
+      tags: [Admin]
+      operationId: adminListAuditLogs
+      summary: Tra cứu audit log
+      x-roles: [CHECKER, ADMIN]
+      security: [{ staffBearer: [] }]
+      parameters:
+        - { name: resource_type, in: query, schema: { type: string } }
+        - { name: resource_id, in: query, schema: { type: string } }
+        - { name: actor_id, in: query, schema: { type: string } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuditLog' }
+                  next_cursor: { $ref: '#/components/schemas/NextCursor' }
+
+        '401': { $ref: '#/components/responses/Unauthorized' }
+# ───────────────────────────── Webhooks (wallet → merchant) ─────────────────────────────
+webhooks:
+  order.paid:
+    post:
+      tags: [Merchant]
+      operationId: webhookOrderPaid
+      security: [{ webhookSignature: [] }]
+      summary: Đơn hàng đã thanh toán
+      description: |
+        Gửi tới `callback_url` của merchant. Header `X-Event-Id`, `X-Timestamp`, `X-Signature` (HMAC-SHA256 với secret của merchant,
+        cùng công thức như request merchant → wallet). Merchant phải xử lý idempotent theo `event_id` và trả `2xx`.
+        Không phải 2xx/timeout 10s ⇒ retry backoff tối đa 24h (BR-51). Merchant luôn có thể tra cứu `GET /merchant/v1/orders/{id}`.
+      x-br: [BR-51]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebhookEvent' }
+      responses:
+        '200': { description: Merchant đã nhận }
+        '4XX': { description: 'Merchant từ chối — wallet ghi nhận và retry theo lịch backoff (tối đa 24h)' }
+  order.refunded:
+    post:
+      tags: [Merchant]
+      operationId: webhookOrderRefunded
+      security: [{ webhookSignature: [] }]
+      summary: Hoàn tiền thành công
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebhookEvent' }
+      responses:
+        '200': { description: Merchant đã nhận }
+
+        '4XX': { description: 'Merchant từ chối — wallet ghi nhận và retry theo lịch backoff (tối đa 24h)' }
+components:
+  securitySchemes:
+    customerBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Access token (Ed25519, 15 phút) do `/v1/auth/*` cấp, gắn với thiết bị. Mọi request `/v1` phải kèm `X-Device-Id`
+        trùng thiết bị trong token, nếu không ⇒ `401 DEVICE_NOT_BOUND`.
+    staffBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Token realm back-office (issuer/audience riêng). Role yêu cầu ghi ở `x-roles` của từng operation.
+    merchantHmac:
+      type: apiKey
+      in: header
+      name: X-Signature
+      description: |
+        Kèm `X-Api-Key`, `X-Timestamp` (RFC 3339, lệch ≤ 5 phút).
+        `X-Signature = hex(HMAC-SHA256(secret, METHOD + "\n" + PATH_WITH_QUERY + "\n" + X-Timestamp + "\n" + SHA256_HEX(body)))`.
+
+    webhookSignature:
+      type: apiKey
+      in: header
+      name: X-Signature
+      description: |
+        Wallet ký callback gửi merchant: kèm `X-Event-Id`, `X-Timestamp`; công thức như `merchantHmac`, dùng secret của merchant.
+
+  parameters:
+    DeviceId:
+      name: X-Device-Id
+      in: header
+      required: true
+      schema: { type: string, format: uuid }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 8, maxLength: 128 }
+    ChallengeId:
+      name: X-Challenge-Id
+      in: header
+      required: false
+      description: Gửi khi thực hiện lại request sau khi đã hoàn tất step-up challenge
+      schema: { type: string }
+    ChallengePath:
+      name: challenge_id
+      in: path
+      required: true
+      schema: { type: string }
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    KycSessionId:
+      name: kyc_session_id
+      in: path
+      required: true
+      schema: { type: string }
+    BankLinkId:
+      name: bank_link_id
+      in: path
+      required: true
+      schema: { type: string }
+    PaymentId:
+      name: payment_id
+      in: path
+      required: true
+      schema: { type: string }
+    DisputeId:
+      name: dispute_id
+      in: path
+      required: true
+      schema: { type: string }
+    WalletId:
+      name: wallet_id
+      in: path
+      required: true
+      schema: { type: string }
+    AdjustmentId:
+      name: adjustment_id
+      in: path
+      required: true
+      schema: { type: string }
+    MerchantOrderId:
+      name: merchant_order_id
+      in: path
+      required: true
+      schema: { type: string, maxLength: 64 }
+
+  requestBodies:
+    ReasonRequired:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [reason]
+            properties:
+              reason: { $ref: '#/components/schemas/Reason' }
+
+  responses:
+    PaymentCreated:
+      description: Giao dịch đồng bộ đã hoàn tất (`SUCCEEDED`) — hoặc phát lại response cũ theo Idempotency-Key
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Payment' }
+          example:
+            payment_id: txn_0192a3b4c5d6e7f8
+            type: TRANSFER
+            status: SUCCEEDED
+            amount: 200000
+            fee: 0
+            currency: VND
+            counterparty: { kind: WALLET, display_name: 'NGUYEN V*** B', reference: '+8490****567' }
+            description: Tra tien com
+            created_at: '2026-10-17T03:15:00Z'
+            completed_at: '2026-10-17T03:15:00Z'
+    PaymentAccepted:
+      description: Đã ghi nhận, đang xử lý với ngân hàng (`PENDING`). Poll `GET /v1/payments/{id}` hoặc chờ push.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Payment' }
+          example:
+            payment_id: txn_0192a3b4c5d6e7f9
+            type: TOPUP
+            status: PENDING
+            amount: 500000
+            fee: 0
+            currency: VND
+            counterparty: { kind: BANK, display_name: Vietcombank, reference: '****1234' }
+            created_at: '2026-10-17T03:15:00Z'
+    BadRequest:
+      description: VALIDATION_ERROR
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: UNAUTHENTICATED / DEVICE_NOT_BOUND
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    UnauthorizedOrStepUp:
+      description: UNAUTHENTICATED, PIN_INVALID, hoặc STEP_UP_REQUIRED (kèm challenge)
+      content:
+        application/json:
+          schema:
+            anyOf:
+              - $ref: '#/components/schemas/StepUpRequired'
+              - $ref: '#/components/schemas/Error'
+          examples:
+            stepUp:
+              value:
+                error: STEP_UP_REQUIRED
+                message: Giao dịch cần xác thực OTP và khuôn mặt
+                challenge_id: chl_0192a3b4c5d6
+                methods: [OTP, FACE]
+                expires_at: '2026-10-17T03:20:00Z'
+                request_id: 3f1c2a9e-0b7d-4c55-9d2e-8a6f0e4b1c11
+            pinInvalid:
+              value:
+                error: PIN_INVALID
+                message: Mã PIN không đúng
+                details: { remaining_attempts: 3 }
+                request_id: 3f1c2a9e-0b7d-4c55-9d2e-8a6f0e4b1c12
+    Forbidden:
+      description: FORBIDDEN / ONBOARDING_INCOMPLETE / WALLET_NOT_ACTIVE
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: NOT_FOUND
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: IDEMPOTENCY_IN_PROGRESS / STATE_CONFLICT
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unprocessable:
+      description: Lỗi nghiệp vụ — xem `x-error-codes`
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            insufficientFunds:
+              value:
+                error: INSUFFICIENT_FUNDS
+                message: Số dư khả dụng không đủ
+                details: { available: 150000, requested: 200000 }
+                request_id: 3f1c2a9e-0b7d-4c55-9d2e-8a6f0e4b1c13
+            limitExceeded:
+              value:
+                error: LIMIT_EXCEEDED
+                message: Vượt hạn mức giao dịch tháng
+                details: { limit_type: MONTH_GENERAL, limit: 100000000, used: 99500000, remaining: 500000 }
+                request_id: 3f1c2a9e-0b7d-4c55-9d2e-8a6f0e4b1c14
+    Locked:
+      description: PIN_LOCKED
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TooManyRequests:
+      description: RATE_LIMITED
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    # ---------- primitives ----------
+    Amount:
+      type: integer
+      format: int64
+      minimum: 1
+      description: Số tiền theo đồng
+    Currency:
+      type: string
+      enum: [VND]
+      default: VND
+    Phone:
+      type: string
+      pattern: '^\+84[0-9]{9,10}$'
+      example: '+84901234567'
+    Pin:
+      type: string
+      pattern: '^[0-9]{6}$'
+      writeOnly: true
+    Otp:
+      type: string
+      pattern: '^[0-9]{6}$'
+      writeOnly: true
+    Reason:
+      type: string
+      minLength: 10
+      maxLength: 1000
+      description: Lý do bắt buộc cho thao tác của nhân viên (ghi audit)
+    NextCursor:
+      type: [string, 'null']
+    Error:
+      type: object
+      required: [error, message, request_id]
+      properties:
+        error: { type: string, description: Mã lỗi trong `x-error-codes` }
+        message: { type: string, description: Thông điệp hiển thị được (tiếng Việt) }
+        details: { type: object, additionalProperties: true }
+        request_id: { type: string }
+    StepUpRequired:
+      type: object
+      required: [error, message, challenge_id, methods, expires_at, request_id]
+      properties:
+        error: { type: string, const: STEP_UP_REQUIRED }
+        message: { type: string }
+        challenge_id: { type: string }
+        methods:
+          type: array
+          items: { type: string, enum: [OTP, FACE] }
+        expires_at: { type: string, format: date-time }
+        request_id: { type: string }
+
+    # ---------- auth / profile ----------
+    DeviceInfo:
+      type: object
+      required: [device_id, fingerprint, platform]
+      properties:
+        device_id: { type: string, format: uuid, description: Do app sinh và lưu secure storage; trùng X-Device-Id }
+        fingerprint: { type: string }
+        platform: { type: string, enum: [ANDROID, IOS] }
+        model: { type: string }
+        app_version: { type: string }
+        push_token: { type: string }
+    TokenPair:
+      type: object
+      required: [access_token, refresh_token, expires_in, token_type]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        token_type: { type: string, const: Bearer }
+        expires_in: { type: integer, description: 'Giây, mặc định 900' }
+        customer: { $ref: '#/components/schemas/Customer' }
+    StaffTokenPair:
+      type: object
+      required: [access_token, refresh_token, expires_in]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        expires_in: { type: integer }
+        staff:
+          type: object
+          properties:
+            staff_id: { type: string }
+            email: { type: string }
+            display_name: { type: string }
+            roles:
+              type: array
+              items: { type: string, enum: [SUPPORT, OPERATOR, CHECKER, ADMIN] }
+    Customer:
+      type: object
+      required: [customer_id, phone, onboarding_status, next_steps]
+      properties:
+        customer_id: { type: string, example: cus_0192a3b4c5d6 }
+        phone: { $ref: '#/components/schemas/Phone' }
+        full_name: { type: [string, 'null'] }
+        date_of_birth: { type: [string, 'null'], format: date }
+        onboarding_status:
+          type: string
+          enum: [REGISTERED, KYC_PENDING, KYC_VERIFIED, KYC_REJECTED, MANUAL_REVIEW]
+        has_pin: { type: boolean }
+        id_expiry_date: { type: [string, 'null'], format: date }
+        next_steps:
+          type: array
+          description: Các bước onboarding còn thiếu để ví ACTIVE (BR-05)
+          items: { type: string, enum: [ACCEPT_CONSENTS, SET_PIN, COMPLETE_KYC, LINK_BANK, RE_KYC] }
+    ConsentType:
+      type: string
+      enum: [TERMS, PERSONAL_DATA, BIOMETRIC_DATA, DATA_SHARING_BANK]
+    Consent:
+      type: object
+      required: [consent_type, policy_version, granted_at]
+      properties:
+        consent_type: { $ref: '#/components/schemas/ConsentType' }
+        policy_version: { type: string }
+        granted_at: { type: string, format: date-time }
+        withdrawn_at: { type: [string, 'null'], format: date-time }
+
+    # ---------- KYC ----------
+    KycStatus:
+      type: string
+      enum: [CREATED, DOCUMENTS_UPLOADED, PROCESSING, RETRYABLE_ERROR, APPROVED, REJECTED, MANUAL_REVIEW, EXPIRED]
+    KycSession:
+      type: object
+      required: [kyc_session_id, purpose, status, uploaded, expires_at]
+      properties:
+        kyc_session_id: { type: string, example: kyc_0192a3b4c5d6 }
+        purpose: { type: string, enum: [ONBOARDING, RE_KYC] }
+        status: { $ref: '#/components/schemas/KycStatus' }
+        attempt_no: { type: integer }
+        attempts_remaining_today: { type: integer }
+        uploaded:
+          type: array
+          items: { type: string, enum: [ID_FRONT, ID_BACK, SELFIE, LIVENESS_VIDEO, CHIP_DATA] }
+        required_documents:
+          type: array
+          items: { type: string, enum: [ID_FRONT, ID_BACK, SELFIE, LIVENESS_VIDEO, CHIP_DATA] }
+        reject_reason:
+          type: [string, 'null']
+          enum: [OCR_UNREADABLE, ID_EXPIRED, UNDERAGE, LIVENESS_FAILED, FACE_MISMATCH, CHIP_MISMATCH, ID_ALREADY_REGISTERED, null]
+        extracted:
+          type: [object, 'null']
+          description: Thông tin trích xuất (đã che số CCCD) để người dùng xác nhận
+          properties:
+            full_name: { type: string }
+            date_of_birth: { type: string, format: date }
+            id_number_masked: { type: string, example: '0010******89' }
+            expiry_date: { type: string, format: date }
+        expires_at: { type: string, format: date-time }
+    AdminKycSession:
+      allOf:
+        - $ref: '#/components/schemas/KycSession'
+        - type: object
+          properties:
+            customer_id: { type: string }
+            checks:
+              type: array
+              items:
+                type: object
+                properties:
+                  check_type: { type: string, enum: [OCR, LIVENESS, FACE_MATCH, CHIP_VERIFY, AGE, DUPLICATE_ID] }
+                  provider: { type: string }
+                  attempt: { type: integer }
+                  result: { type: string, enum: [PASS, FAIL, ERROR] }
+                  score: { type: [number, 'null'] }
+                  error_code: { type: [string, 'null'] }
+                  created_at: { type: string, format: date-time }
+            documents:
+              type: array
+              items:
+                type: object
+                properties:
+                  document_id: { type: string }
+                  kind: { type: string }
+                  mime_type: { type: string }
+                  size_bytes: { type: integer }
+
+    # ---------- wallet ----------
+    WalletStatus:
+      type: string
+      enum: [INACTIVE, ACTIVE, SUSPENDED, FROZEN, CLOSED]
+    Wallet:
+      type: object
+      required: [wallet_id, status, currency, available_balance, held_balance, total_balance]
+      properties:
+        wallet_id: { type: string, example: wal_0192a3b4c5d6 }
+        status: { $ref: '#/components/schemas/WalletStatus' }
+        status_reason:
+          type: [string, 'null']
+          enum: [ID_EXPIRED, FRAUD_SUSPECTED, RECON_MISMATCH, CUSTOMER_REQUEST, AUTHORITY_REQUEST, DORMANT, null]
+        currency: { $ref: '#/components/schemas/Currency' }
+        available_balance: { type: integer, format: int64, description: Có thể chi tiêu }
+        held_balance: { type: integer, format: int64, description: Đang giữ cho rút/chuyển ngân hàng chưa xong }
+        total_balance: { type: integer, format: int64, description: available + held }
+        created_at: { type: string, format: date-time }
+    WalletLimits:
+      type: object
+      required: [period, month_general, per_transaction, strong_auth]
+      properties:
+        period: { type: string, example: '2026-10', description: 'Tháng dương lịch, giờ VN' }
+        month_general:
+          $ref: '#/components/schemas/LimitUsage'
+        month_essential:
+          $ref: '#/components/schemas/LimitUsage'
+        per_transaction:
+          type: object
+          properties:
+            min_transfer: { type: integer, format: int64 }
+            min_topup: { type: integer, format: int64 }
+            max: { type: integer, format: int64 }
+        strong_auth:
+          type: object
+          description: Ngưỡng cần OTP + khuôn mặt (BR-36)
+          properties:
+            single_threshold: { type: integer, format: int64 }
+            daily_threshold: { type: integer, format: int64 }
+            today_own_account_total: { type: integer, format: int64 }
+            today_other_total: { type: integer, format: int64 }
+        new_device_restriction:
+          type: [object, 'null']
+          description: Có giá trị trong 24h đầu sau khi đổi thiết bị (BR-38)
+          properties:
+            daily_limit: { type: integer, format: int64 }
+            until: { type: string, format: date-time }
+    LimitUsage:
+      type: object
+      required: [limit, used, remaining]
+      properties:
+        limit: { type: integer, format: int64 }
+        used: { type: integer, format: int64 }
+        remaining: { type: integer, format: int64 }
+    Activity:
+      type: object
+      required: [payment_id, type, direction, amount, currency, status, occurred_at]
+      properties:
+        payment_id: { type: string }
+        type: { $ref: '#/components/schemas/PaymentType' }
+        direction: { type: string, enum: [IN, OUT] }
+        amount: { type: integer, format: int64 }
+        currency: { $ref: '#/components/schemas/Currency' }
+        status: { $ref: '#/components/schemas/PaymentStatus' }
+        counterparty_display: { type: string }
+        description: { type: [string, 'null'] }
+        occurred_at: { type: string, format: date-time }
+    RecipientLookup:
+      type: object
+      required: [wallet_id, display_name]
+      properties:
+        wallet_id: { type: string }
+        display_name: { type: string, example: 'NGUYEN V*** B' }
+        phone_masked: { type: string, example: '+8490****567' }
+
+    # ---------- bank ----------
+    Bank:
+      type: object
+      required: [bank_code, name, supports]
+      properties:
+        bank_code: { type: string, example: VCB }
+        name: { type: string, example: Vietcombank }
+        short_name: { type: string }
+        logo_url: { type: string, format: uri }
+        supports:
+          type: array
+          items: { type: string, enum: [LINK_ACCOUNT, LINK_DEBIT_CARD, INTERBANK_DESTINATION] }
+    BankLink:
+      type: object
+      required: [bank_link_id, bank_code, source_type, number_masked, status, is_default]
+      properties:
+        bank_link_id: { type: string, example: lnk_0192a3b4c5d6 }
+        bank_code: { type: string }
+        bank_name: { type: string }
+        source_type: { type: string, enum: [ACCOUNT, DEBIT_CARD] }
+        number_masked: { type: string, example: '****1234' }
+        holder_name: { type: string }
+        status: { type: string, enum: [PENDING, OTP_SENT, VERIFIED, FAILED, REVOKED] }
+        failure_code: { type: [string, 'null'] }
+        is_default: { type: boolean }
+        otp_expires_at: { type: [string, 'null'], format: date-time }
+        verified_at: { type: [string, 'null'], format: date-time }
+
+    # ---------- payments ----------
+    PaymentType:
+      type: string
+      enum: [TOPUP, TRANSFER, WITHDRAW, INTERBANK, QR_PAYMENT, REFUND, ADJUSTMENT]
+    PaymentStatus:
+      type: string
+      description: Trạng thái hiển thị cho khách hàng (NEEDS_RECONCILIATION hiển thị là PENDING)
+      enum: [PENDING, SUCCEEDED, FAILED, REVERSED]
+    PaymentStatusInternal:
+      type: string
+      enum: [CREATED, PENDING, SUCCEEDED, FAILED, NEEDS_RECONCILIATION, REVERSED]
+    Payment:
+      type: object
+      required: [payment_id, type, status, amount, fee, currency, created_at]
+      properties:
+        payment_id: { type: string, example: txn_0192a3b4c5d6 }
+        type: { $ref: '#/components/schemas/PaymentType' }
+        status: { $ref: '#/components/schemas/PaymentStatus' }
+        amount: { $ref: '#/components/schemas/Amount' }
+        fee: { type: integer, format: int64, minimum: 0 }
+        currency: { $ref: '#/components/schemas/Currency' }
+        direction: { type: string, enum: [IN, OUT], description: Theo góc nhìn khách hàng đang xem }
+        counterparty:
+          type: object
+          properties:
+            kind: { type: string, enum: [WALLET, BANK, MERCHANT] }
+            display_name: { type: string }
+            reference: { type: string, description: SĐT đã che / 4 số cuối TK / mã đơn }
+        description: { type: [string, 'null'] }
+        failure_code: { type: [string, 'null'], examples: [BANK_REJECTED_INSUFFICIENT_FUNDS, BANK_REJECTED_LINK_REVOKED] }
+        failure_message: { type: [string, 'null'] }
+        refund_of: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: [string, 'null'], format: date-time }
+    TopupRequest:
+      type: object
+      required: [bank_link_id, amount, currency, pin]
+      properties:
+        bank_link_id: { type: string }
+        amount: { $ref: '#/components/schemas/Amount' }
+        currency: { $ref: '#/components/schemas/Currency' }
+        pin: { $ref: '#/components/schemas/Pin' }
+    TransferRequest:
+      type: object
+      required: [recipient, amount, currency, pin]
+      properties:
+        recipient:
+          type: object
+          description: Chỉ định đúng một trong hai
+          oneOf:
+            - required: [wallet_id]
+            - required: [phone]
+          properties:
+            wallet_id: { type: string }
+            phone: { $ref: '#/components/schemas/Phone' }
+        amount: { $ref: '#/components/schemas/Amount' }
+        currency: { $ref: '#/components/schemas/Currency' }
+        description: { type: string, maxLength: 140 }
+        pin: { $ref: '#/components/schemas/Pin' }
+    WithdrawalRequest:
+      type: object
+      required: [bank_link_id, amount, currency, pin]
+      properties:
+        bank_link_id: { type: string }
+        amount: { $ref: '#/components/schemas/Amount' }
+        currency: { $ref: '#/components/schemas/Currency' }
+        pin: { $ref: '#/components/schemas/Pin' }
+    InterbankTransferRequest:
+      type: object
+      required: [dest_bank_code, dest_account_number, amount, currency, pin]
+      properties:
+        dest_bank_code: { type: string }
+        dest_account_number: { type: string, maxLength: 34 }
+        dest_holder_name: { type: string, description: 'Nếu gửi, ngân hàng đích kiểm tra khớp' }
+        amount: { $ref: '#/components/schemas/Amount' }
+        currency: { $ref: '#/components/schemas/Currency' }
+        description: { type: string, maxLength: 140 }
+        pin: { $ref: '#/components/schemas/Pin' }
+    QrInfo:
+      type: object
+      required: [order_ref, merchant, amount, currency, status, expires_at]
+      properties:
+        order_ref: { type: string, description: Mã đơn nội bộ (ord_…) dùng khi thanh toán }
+        merchant:
+          type: object
+          properties:
+            merchant_id: { type: string }
+            display_name: { type: string }
+            category: { type: string, enum: [GENERAL, ESSENTIAL] }
+        merchant_order_id: { type: string }
+        amount: { $ref: '#/components/schemas/Amount' }
+        currency: { $ref: '#/components/schemas/Currency' }
+        description: { type: string }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        expires_at: { type: string, format: date-time }
+    QrPaymentRequest:
+      type: object
+      required: [order_ref, amount, currency, pin]
+      properties:
+        order_ref: { type: string }
+        amount: { $ref: '#/components/schemas/Amount' }
+        currency: { $ref: '#/components/schemas/Currency' }
+        pin: { $ref: '#/components/schemas/Pin' }
+
+    # ---------- challenges ----------
+    Challenge:
+      type: object
+      required: [challenge_id, purpose, status, required_methods, completed_methods, expires_at]
+      properties:
+        challenge_id: { type: string }
+        purpose: { type: string, enum: [TRANSACTION, NEW_DEVICE, PIN_RESET, CHANGE_PHONE] }
+        status: { type: string, enum: [PENDING, VERIFIED, CONSUMED, EXPIRED, FAILED] }
+        required_methods:
+          type: array
+          items: { type: string, enum: [OTP, FACE] }
+        completed_methods:
+          type: array
+          items: { type: string, enum: [OTP, FACE] }
+        otp_sent_to: { type: string, example: '+8490****567' }
+        remaining_attempts: { type: integer }
+        expires_at: { type: string, format: date-time }
+
+    # ---------- disputes ----------
+    DisputeType:
+      type: string
+      enum: [WRONG_RECIPIENT, NOT_RECEIVED, DUPLICATE_CHARGE, UNAUTHORIZED, OTHER]
+    DisputeStatus:
+      type: string
+      enum: [SUBMITTED, IN_REVIEW, WAITING_CUSTOMER, RESOLVED_ACCEPTED, RESOLVED_REJECTED]
+    Dispute:
+      type: object
+      required: [dispute_id, payment_id, type, status, submitted_at, due_at]
+      properties:
+        dispute_id: { type: string, example: dsp_0192a3b4c5d6 }
+        payment_id: { type: string }
+        type: { $ref: '#/components/schemas/DisputeType' }
+        description: { type: string }
+        status: { $ref: '#/components/schemas/DisputeStatus' }
+        resolution: { type: [string, 'null'] }
+        submitted_at: { type: string, format: date-time }
+        due_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    # ---------- merchant ----------
+    OrderStatus:
+      type: string
+      enum: [CREATED, PAID, EXPIRED, CANCELLED, PARTIALLY_REFUNDED, REFUNDED]
+    CreateOrderRequest:
+      type: object
+      required: [merchant_order_id, amount, currency]
+      properties:
+        merchant_order_id: { type: string, maxLength: 64 }
+        amount: { $ref: '#/components/schemas/Amount' }
+        currency: { $ref: '#/components/schemas/Currency' }
+        description: { type: string, maxLength: 140 }
+    Order:
+      type: object
+      required: [order_ref, merchant_order_id, amount, currency, status, expires_at]
+      properties:
+        order_ref: { type: string, example: ord_0192a3b4c5d6 }
+        merchant_order_id: { type: string }
+        amount: { $ref: '#/components/schemas/Amount' }
+        currency: { $ref: '#/components/schemas/Currency' }
+        description: { type: string }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        qr_token:
+          type: string
+          description: Chỉ trả khi tạo đơn. Token ngẫu nhiên 128-bit; server chỉ lưu hash (BR-52)
+        qr_content:
+          type: string
+          description: Chuỗi để render QR — chỉ chứa token
+          example: 'ewallet://pay?t=Qk3x9mZ0aT1bVvYwPq7rS2'
+        expires_at: { type: string, format: date-time }
+        paid_at: { type: [string, 'null'], format: date-time }
+        payment_id: { type: [string, 'null'] }
+        refunded_amount: { type: integer, format: int64 }
+    Refund:
+      type: object
+      required: [merchant_refund_id, amount, currency, status]
+      properties:
+        merchant_refund_id: { type: string }
+        order_ref: { type: string }
+        amount: { $ref: '#/components/schemas/Amount' }
+        currency: { $ref: '#/components/schemas/Currency' }
+        status: { type: string, enum: [PENDING, SUCCEEDED, FAILED] }
+        payment_id: { type: [string, 'null'] }
+        failure_code: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+    WebhookEvent:
+      type: object
+      required: [event_id, event_type, occurred_at, data]
+      properties:
+        event_id: { type: string, format: uuid }
+        event_type: { type: string, enum: [order.paid, order.refunded] }
+        occurred_at: { type: string, format: date-time }
+        data:
+          type: object
+          required: [order]
+          properties:
+            order: { $ref: '#/components/schemas/Order' }
+            refund: { $ref: '#/components/schemas/Refund' }
+
+    # ---------- admin ----------
+    AdminCustomer:
+      type: object
+      properties:
+        customer_id: { type: string }
+        phone: { $ref: '#/components/schemas/Phone' }
+        full_name: { type: [string, 'null'] }
+        onboarding_status: { type: string }
+        wallet_id: { type: [string, 'null'] }
+        wallet_status: { $ref: '#/components/schemas/WalletStatus' }
+        created_at: { type: string, format: date-time }
+    AdminCustomerDetail:
+      type: object
+      properties:
+        customer: { $ref: '#/components/schemas/Customer' }
+        id_number_masked: { type: [string, 'null'] }
+        wallet: { $ref: '#/components/schemas/Wallet' }
+        limits: { $ref: '#/components/schemas/WalletLimits' }
+        bank_links:
+          type: array
+          items: { $ref: '#/components/schemas/BankLink' }
+        devices:
+          type: array
+          items:
+            type: object
+            properties:
+              device_id: { type: string }
+              platform: { type: string }
+              model: { type: string }
+              status: { type: string, enum: [ACTIVE, REVOKED] }
+              bound_at: { type: string, format: date-time }
+        consents:
+          type: array
+          items: { $ref: '#/components/schemas/Consent' }
+        open_aml_alerts: { type: integer }
+        open_disputes: { type: integer }
+    AdminPayment:
+      type: object
+      properties:
+        payment_id: { type: string }
+        type: { $ref: '#/components/schemas/PaymentType' }
+        status: { $ref: '#/components/schemas/PaymentStatusInternal' }
+        customer_id: { type: string }
+        amount: { type: integer, format: int64 }
+        fee: { type: integer, format: int64 }
+        currency: { $ref: '#/components/schemas/Currency' }
+        auth_level: { type: string, enum: [PIN, OTP_FACE] }
+        limit_category: { type: string, enum: [NONE, GENERAL, ESSENTIAL] }
+        failure_code: { type: [string, 'null'] }
+        pending_since: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: [string, 'null'], format: date-time }
+        request_id: { type: string }
+    AdminPaymentDetail:
+      allOf:
+        - $ref: '#/components/schemas/AdminPayment'
+        - type: object
+          properties:
+            source_wallet_id: { type: [string, 'null'] }
+            dest_wallet_id: { type: [string, 'null'] }
+            bank_link_id: { type: [string, 'null'] }
+            merchant_id: { type: [string, 'null'] }
+            order_ref: { type: [string, 'null'] }
+            status_history:
+              type: array
+              items:
+                type: object
+                properties:
+                  from_status: { type: [string, 'null'] }
+                  to_status: { type: string }
+                  reason_code: { type: [string, 'null'] }
+                  actor_type: { type: string }
+                  actor_id: { type: [string, 'null'] }
+                  at: { type: string, format: date-time }
+            bank_operation:
+              type: [object, 'null']
+              properties:
+                bank_operation_id: { type: string, format: uuid }
+                type: { type: string }
+                status: { type: string, enum: [PENDING, SENT, SUCCEEDED, REJECTED, UNKNOWN, NEEDS_RECONCILIATION] }
+                corebank_ref: { type: [string, 'null'] }
+                reason_code: { type: [string, 'null'] }
+                attempts:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      attempt_no: { type: integer }
+                      kind: { type: string, enum: [SUBMIT, QUERY] }
+                      outcome: { type: string }
+                      http_status: { type: [integer, 'null'] }
+                      latency_ms: { type: integer }
+                      at: { type: string, format: date-time }
+            ledger_entries:
+              type: array
+              items:
+                type: object
+                properties:
+                  ledger_txn_id: { type: string }
+                  kind: { type: string }
+                  account_code: { type: string }
+                  direction: { type: string, enum: [D, C] }
+                  amount: { type: integer, format: int64 }
+                  at: { type: string, format: date-time }
+    ReconRun:
+      type: object
+      properties:
+        recon_run_id: { type: string }
+        business_date: { type: string, format: date }
+        status: { type: string, enum: [RUNNING, COMPLETED, FAILED] }
+        safeguard_bank_balance: { type: [integer, 'null'], format: int64 }
+        safeguard_ledger_balance: { type: [integer, 'null'], format: int64 }
+        total_liabilities: { type: [integer, 'null'], format: int64 }
+        invariant_ok: { type: [boolean, 'null'] }
+        matched_count: { type: integer }
+        mismatch_count: { type: integer }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+    ReconResolutionStatus:
+      type: string
+      enum: [OPEN, AUTO_RESOLVED, ADJUSTMENT_PENDING, RESOLVED, WRITTEN_OFF]
+    ReconItem:
+      type: object
+      properties:
+        recon_item_id: { type: string }
+        kind: { type: string, enum: [MISSING_IN_WALLET, MISSING_IN_BANK, AMOUNT_MISMATCH, STATUS_MISMATCH, STUCK_PENDING] }
+        bank_operation_id: { type: [string, 'null'] }
+        corebank_ref: { type: [string, 'null'] }
+        payment_id: { type: [string, 'null'] }
+        wallet_amount: { type: [integer, 'null'], format: int64 }
+        bank_amount: { type: [integer, 'null'], format: int64 }
+        resolution_status: { $ref: '#/components/schemas/ReconResolutionStatus' }
+        notes: { type: [string, 'null'] }
+    AdjustmentStatus:
+      type: string
+      enum: [DRAFT, PENDING_APPROVAL, APPROVED, REJECTED, POSTED]
+    AdjustmentInput:
+      type: object
+      required: [type, wallet_id, amount, reason]
+      properties:
+        type:
+          type: string
+          enum: [COMPENSATE_CREDIT, REVERSAL, SUSPENSE_RECOVERY]
+          description: Theo ma trận bút toán erd §3.2 dòng 7
+        wallet_id: { type: string }
+        amount: { $ref: '#/components/schemas/Amount' }
+        recon_item_id: { type: string }
+        dispute_id: { type: string }
+        payment_id: { type: string, description: Giao dịch gốc (với REVERSAL) }
+        reason: { $ref: '#/components/schemas/Reason' }
+    Adjustment:
+      allOf:
+        - $ref: '#/components/schemas/AdjustmentInput'
+        - type: object
+          required: [adjustment_id, status, maker_id, created_at]
+          properties:
+            adjustment_id: { type: string }
+            status: { $ref: '#/components/schemas/AdjustmentStatus' }
+            maker_id: { type: string }
+            checker_id: { type: [string, 'null'] }
+            ledger_txn_id: { type: [string, 'null'] }
+            created_at: { type: string, format: date-time }
+            decided_at: { type: [string, 'null'], format: date-time }
+    AmlAlertStatus:
+      type: string
+      enum: [OPEN, REVIEWING, CLOSED_FALSE_POSITIVE, ESCALATED, REPORTED]
+    AmlAlert:
+      type: object
+      properties:
+        aml_alert_id: { type: string }
+        rule_code: { type: string, enum: [EWIRE_THRESHOLD, TOPUP_THEN_DRAIN, FAN_IN, MANUAL] }
+        customer_id: { type: string }
+        payment_ids:
+          type: array
+          items: { type: string }
+        total_amount: { type: integer, format: int64 }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        status: { $ref: '#/components/schemas/AmlAlertStatus' }
+        assignee_id: { type: [string, 'null'] }
+        action_taken: { type: [string, 'null'] }
+        notes: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+    Setting:
+      type: object
+      required: [key, value]
+      properties:
+        key: { type: string }
+        value: { description: Giá trị JSON }
+        description: { type: string }
+        updated_by: { type: [string, 'null'] }
+        updated_at: { type: string, format: date-time }
+    AuditLog:
+      type: object
+      properties:
+        audit_log_id: { type: string }
+        occurred_at: { type: string, format: date-time }
+        actor_type: { type: string, enum: [CUSTOMER, STAFF, MERCHANT, SYSTEM] }
+        actor_id: { type: [string, 'null'] }
+        action: { type: string }
+        resource_type: { type: string }
+        resource_id: { type: string }
+        outcome: { type: string, enum: [SUCCESS, DENIED, ERROR] }
+        reason: { type: [string, 'null'] }
+        request_id: { type: string }
+        metadata: { type: object, additionalProperties: true }

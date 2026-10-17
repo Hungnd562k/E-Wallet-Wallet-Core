@@ -1,0 +1,62 @@
+version: "2"
+# Each package only sees the platform migration plus its own module's migration,
+# so generated models never include another module's tables (architecture §4.3 rule 2).
+# Regenerate with: make sqlc
+sql:
+  - engine: postgresql
+    schema: [migrations/0001_platform_init.up.sql, migrations/0002_ledger_init.up.sql]
+    queries: internal/ledger/store/queries.sql
+    gen:
+      go: &gen
+        package: store
+        out: internal/ledger/store
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+        overrides:
+          - db_type: uuid
+            go_type: github.com/google/uuid.UUID
+          - db_type: uuid
+            nullable: true
+            go_type:
+              import: github.com/google/uuid
+              type: UUID
+              pointer: true
+          - db_type: timestamptz
+            go_type: time.Time
+          - db_type: date
+            go_type: time.Time
+          - db_type: timestamptz
+            nullable: true
+            go_type:
+              type: time.Time
+              pointer: true
+  - engine: postgresql
+    schema: [migrations/0001_platform_init.up.sql, migrations/0003_wallet_init.up.sql]
+    queries: internal/wallet/store/queries.sql
+    gen:
+      go:
+        <<: *gen
+        out: internal/wallet/store
+  - engine: postgresql
+    schema: [migrations/0001_platform_init.up.sql, migrations/0004_payment_init.up.sql]
+    queries: internal/payment/store/queries.sql
+    gen:
+      go:
+        <<: *gen
+        out: internal/payment/store
+  - engine: postgresql
+    schema: [migrations/0001_platform_init.up.sql]
+    queries: internal/platform/idempotency/queries.sql
+    gen:
+      go:
+        <<: *gen
+        package: idemstore
+        out: internal/platform/idempotency/idemstore
+  - engine: postgresql
+    schema: [migrations/0001_platform_init.up.sql]
+    queries: internal/platform/outbox/queries.sql
+    gen:
+      go:
+        <<: *gen
+        package: outboxstore
+        out: internal/platform/outbox/outboxstore
