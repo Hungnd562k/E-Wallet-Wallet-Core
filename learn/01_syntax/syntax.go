@@ -58,5 +58,11 @@ func SumPositive(amounts ...int64) (total int64) { // variadic param + named res
 // Exercise (docs/go-map/01-cu-phap.md): implement it, then remove the t.Skip in the test.
 func ParseVND(s string) (int64, error) {
 	// TODO(bài tập): strings.TrimSuffix, strings.ReplaceAll, strconv.ParseInt
+	if len(s) != 0 {
+		s = strings.TrimSuffix(s, "₫")
+		s = strings.Trim(s, " ")
+		s = strings.ReplaceAll(s, ".", "")
+		return strconv.ParseInt(s, 0, 0)
+	}
 	return 0, nil
 }

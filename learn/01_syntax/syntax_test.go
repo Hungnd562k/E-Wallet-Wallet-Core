@@ -15,6 +15,7 @@ func TestFormatVND(t *testing.T) {
 		{1000, "1.000 ₫"},
 		{1234567, "1.234.567 ₫"},
 		{-50000, "-50.000 ₫"},
+		{-1234567, "-1.234.567 ₫"},
 	}
 	for _, tt := range tests {
 		if got := FormatVND(tt.in); got != tt.want {
@@ -39,8 +40,8 @@ func TestSumPositive(t *testing.T) {
 }
 
 func TestParseVND(t *testing.T) {
-	t.Skip("bài tập: implement ParseVND then delete this line")
-	for _, in := range []int64{0, 1000, 1234567} {
+	// t.Skip("bài tập: implement ParseVND then delete this line")
+	for _, in := range []int64{0, 1000, 1234567, -1234567} {
 		got, err := ParseVND(FormatVND(in))
 		if err != nil || got != in {
 			t.Errorf("ParseVND(FormatVND(%d)) = %d, %v", in, got, err)
