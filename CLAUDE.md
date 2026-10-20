@@ -35,6 +35,16 @@ Running one integration test directly: `go test -race -count=1 -run TestConcurre
 
 Learn exercises skip themselves with `t.Skip("bài tập")` until the user implements them; that is expected, not a failure.
 
+## Commits made by Claude Code
+
+Every commit that Claude Code creates or amends **must** carry a Claude identification trailer as the last line of the message, so human and machine commits can be told apart:
+
+```
+Co-Authored-By: Claude <model name> <noreply@anthropic.com>
+```
+
+No exceptions, including small fixes, merges and reverts. Commits written by the owner carry no such trailer. List Claude's commits with `git log --grep='noreply@anthropic.com'`.
+
 ## Layout and conventions
 
 - `internal/<module>/service.go` is the module's **only** public API. Domain types are re-exported there with type aliases, e.g. `type Posting = domain.Posting`.
