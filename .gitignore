@@ -31,3 +31,6 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Tạo riêng ra 1 dir private, mọi nội dung bên trong này đều ko push lên repo
+private/
