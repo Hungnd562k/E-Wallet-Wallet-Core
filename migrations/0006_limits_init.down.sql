@@ -1,1 +1,1 @@
-drop schema if exists limits cascade;
+DROP SCHEMA IF EXISTS limits CASCADE;
