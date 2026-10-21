@@ -9,9 +9,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 The design is the source of truth. It lives in the sibling repo `../E-Wallet/docs/`, in Vietnamese:
 - `architecture.md`: modules, dependency rules (§4.3), transactions and outbox (§5), worker (§6), security (§8), data rules (§9).
 - `erd.md`: tables, ledger triggers, posting matrix (§3.2), state machines (§6).
-- `scope.md`: the `BR-xx` business rules cited in code.
+- `business-rules.md`: the `BR-xx` business rules cited in code.
+- `fsd/`: use cases (`UC-xx`) and the shared behaviours `CF-xx`.
 
-`api/openapi.yaml` is a copy of `../E-Wallet/docs/api/wallet-core.openapi.yaml`.
+`api/openapi.yaml` is the source of truth for the wallet-core API contract; the design docs link to it instead of keeping their own copy. Lint it with `npx @redocly/cli lint` (config in `redocly.yaml`).
 
 The owner is new to Go and comes from C#. `docs/go-map/` is a Vietnamese learning map that anchors Go concepts to `file:line` in this repo, and `learn/` holds runnable exercises. **If you move code that docs/go-map links to, update the line anchors.** Write docs in Vietnamese and code comments in English.
 

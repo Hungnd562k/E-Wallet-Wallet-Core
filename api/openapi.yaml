@@ -7,7 +7,7 @@ info:
     name: Proprietary — project học tập, không dùng cho tiền thật
     identifier: LicenseRef-Proprietary
   description: |
-    Nguồn chuẩn cho hợp đồng giữa **wallet-core** và các client. Liên quan: `docs/scope.md` (BR-xx),
+    Nguồn chuẩn cho hợp đồng giữa **wallet-core** và các client. Liên quan (repo `E-Wallet`): `docs/business-rules.md` (BR-xx), `docs/fsd/` (UC-xx),
     `docs/architecture.md` §7, `docs/erd.md`.
 
     ## Ba nhóm API
@@ -29,7 +29,7 @@ info:
     - Cùng key + payload khác ⇒ `422 IDEMPOTENCY_KEY_REUSED`. Request trước còn đang xử lý ⇒ `409 IDEMPOTENCY_IN_PROGRESS`.
     - Trường `pin` **không** tham gia tính hash payload.
 
-    ## Xác thực giao dịch (scope BR-35…40)
+    ## Xác thực giao dịch (BR-35…40)
     1. Mọi lệnh tiền gửi kèm `pin` (6 số) trong body.
     2. Nếu cần xác thực mạnh (G > 10 tr hoặc tổng ngày > 20 tr, thiết bị mới…) server trả
        `401 STEP_UP_REQUIRED` + `challenge_id` + `methods` (ví dụ `["OTP","FACE"]`).
@@ -1841,7 +1841,7 @@ paths:
     get:
       tags: [Admin]
       operationId: adminListSettings
-      summary: Tham số cấu hình nghiệp vụ (scope §5)
+      summary: Tham số cấu hình nghiệp vụ (business-rules §5)
       x-roles: [OPERATOR, CHECKER, ADMIN]
       security: [{ staffBearer: [] }]
       responses:
@@ -1892,6 +1892,8 @@ paths:
         - { name: resource_type, in: query, schema: { type: string } }
         - { name: resource_id, in: query, schema: { type: string } }
         - { name: actor_id, in: query, schema: { type: string } }
+        - { name: action, in: query, schema: { type: string }, description: 'Ví dụ auth.pin.locked — danh mục ở fsd/09 §1.3' }
+        - { name: outcome, in: query, schema: { type: string, enum: [SUCCESS, DENIED, ERROR] } }
         - { name: from, in: query, schema: { type: string, format: date-time } }
         - { name: to, in: query, schema: { type: string, format: date-time } }
         - $ref: '#/components/parameters/Cursor'
@@ -1911,6 +1913,7 @@ paths:
                   next_cursor: { $ref: '#/components/schemas/NextCursor' }
 
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 # ───────────────────────────── Webhooks (wallet → merchant) ─────────────────────────────
 webhooks:
   order.paid:

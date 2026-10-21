@@ -1,0 +1,10 @@
+extends:
+  - recommended
+
+apis:
+  wallet-core:
+    root: api/openapi.yaml
+
+rules:
+  # Local environment only (docker compose), see E-Wallet docs/architecture.md §11.
+  no-server-example.com: off
