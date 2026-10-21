@@ -46,6 +46,19 @@ type Wallet struct {
 	Version         int32
 }
 
+// Wallet balance
+type WalletBalance struct {
+	WalletID         uuid.UUID `json:"wallet_id"`
+	LedgerAccountID  uuid.UUID `json:"-"`
+	Status           string    `json:"status"`
+	Currency         string    `json:"currency"`
+	AvailableBalance int64     `json:"available_balance"`
+	HeldBalance      int64     `json:"held_balance"`
+	TotalBalance     int64     `json:"total_balance"`
+	StatusReason     string    `json:"status_reason"`
+	CreatedAt        string    `json:"created_at"`
+}
+
 type Service struct {
 	pool   *pgxpool.Pool
 	ledger *ledger.Service
@@ -139,6 +152,17 @@ func (s *Service) GetByCustomer(ctx context.Context, customerID uuid.UUID) (Wall
 	return toWallet(row), nil
 }
 
+func (s *Service) GetDetailByCustomer(ctx context.Context, customerID uuid.UUID) (WalletBalance, error) {
+	row, err := s.queries(ctx).GetWalletByCustomer(ctx, customerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return WalletBalance{}, ErrNotFound
+	}
+	if err != nil {
+		return WalletBalance{}, fmt.Errorf("get wallet by customer: %w", err)
+	}
+	return mapWalletBalanceResponse(row, 0, 0), nil
+}
+
 // LockActive row-locks the given wallets (ascending id order) for the rest of
 // the caller's transaction and checks that every one can transact. A frozen
 // wallet therefore cannot be frozen "between" the check and the posting.
@@ -203,4 +227,18 @@ func nilIfEmpty(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+func mapWalletBalanceResponse(r store.WalletWallet, balance int64, hold int64) WalletBalance {
+	return WalletBalance{
+		WalletID:         r.ID,
+		LedgerAccountID:  r.LedgerAccountID,
+		Status:           r.Status,
+		Currency:         r.Currency,
+		AvailableBalance: balance,
+		HeldBalance:      hold,
+		TotalBalance:     balance + hold,
+		StatusReason:     *r.StatusReason,
+		CreatedAt:        r.CreatedAt.String(),
+	}
 }

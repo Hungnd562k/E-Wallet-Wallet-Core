@@ -25,6 +25,7 @@ import (
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/idempotency"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/outbox"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/wallet"
+	wallethttp "github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/wallet/http"
 )
 
 // Modules holds the constructed module services.
@@ -68,6 +69,7 @@ func NewAPIHandler(pool *pgxpool.Pool, m *Modules, authn auth.Authenticator) htt
 	r.Group(func(r chi.Router) {
 		r.Use(auth.Middleware(authn))
 		paymenthttp.NewHandler(m.Payment).Routes(r)
+		wallethttp.NewHandler(m.Wallet, m.Ledger).Routes(r)
 	})
 	return r
 }
