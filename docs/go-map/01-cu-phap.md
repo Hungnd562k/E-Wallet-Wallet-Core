@@ -32,7 +32,7 @@ Bài tập: [`learn/01_syntax`](../../learn/01_syntax/). Chạy bằng `go test 
 - **Khai báo trong `if`**: trong `config.Load` ([`internal/platform/config/config.go:38`](../../internal/platform/config/config.go#L38)), dạng `if err := ...; err != nil`.
 - **`switch` không có biểu thức**, dùng như chuỗi `if/else`: [`internal/payment/domain/domain.go:76`](../../internal/payment/domain/domain.go#L76).
 - **`defer` + `recover` + named result**: [`internal/platform/db/db.go:44`](../../internal/platform/db/db.go#L44). `WithTx` khai báo `(err error)` để hàm `defer` đọc được lỗi cuối cùng và rollback.
-- **`range` trên slice, lấy địa chỉ phần tử**: [`internal/ledger/service.go:177`](../../internal/ledger/service.go#L177). `acc := &rows[i]` trỏ thẳng vào phần tử trong slice; còn `for _, acc := range rows` sẽ cho bạn một **bản sao**.
+- **`range` trên slice, lấy địa chỉ phần tử**: [`internal/ledger/service.go:181`](../../internal/ledger/service.go#L181). `acc := &rows[i]` trỏ thẳng vào phần tử trong slice; còn `for _, acc := range rows` sẽ cho bạn một **bản sao**.
 - **Literal số có `_`**: `1_000_000` trong [`cmd/devseed/main.go`](../../cmd/devseed/main.go).
 
 ## Bài tập
