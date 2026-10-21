@@ -33,7 +33,7 @@ Bài tập: [`learn/06_concurrency`](../../learn/06_concurrency/). **Luôn chạ
 - **Worker pool có giới hạn**: `errgroup.WithContext` + `g.SetLimit` ([`dispatcher.go:103`](../../internal/platform/outbox/dispatcher.go#L103)).
 - **Làm nốt việc dở khi đang tắt**: `context.WithoutCancel(ctx)` ([`dispatcher.go:102`](../../internal/platform/outbox/dispatcher.go#L102)). Batch đang xử lý vẫn chạy xong, nhưng không nhận batch mới.
 - **Mutex bảo vệ state dùng chung**: `clock.Fake` ([`internal/platform/clock/clock.go:25`](../../internal/platform/clock/clock.go#L25)).
-- **Lock DB theo thứ tự để tránh deadlock**: `LockAccounts ... ORDER BY id FOR UPDATE` ([`internal/ledger/service.go:126`](../../internal/ledger/service.go#L126)) và `LockActive` ([`internal/wallet/service.go:145`](../../internal/wallet/service.go#L145)).
+- **Lock DB theo thứ tự để tránh deadlock**: `LockAccounts ... ORDER BY id FOR UPDATE` ([`internal/ledger/service.go:128`](../../internal/ledger/service.go#L128)) và `LockActive` ([`internal/wallet/service.go:145`](../../internal/wallet/service.go#L145)).
 - **Idempotency khi nhiều request đến đồng thời**: `INSERT … ON CONFLICT DO NOTHING` sẽ **chờ** transaction đang giữ cùng key ([`internal/platform/idempotency/idempotency.go:84`](../../internal/platform/idempotency/idempotency.go#L84)).
 - **Test đồng thời thật**: [`test/integration/transfer_test.go:113`](../../test/integration/transfer_test.go#L113) cho 50 goroutine chuyển chéo A↔B, và [`dòng 159`](../../test/integration/transfer_test.go#L159) cho 10 request cùng một key. Chú ý `tryTransfer` ([`helpers_test.go:107`](../../test/integration/helpers_test.go#L107)): **không được gọi `t.Fatal` từ goroutine khác goroutine của test**, thay vào đó dùng `t.Error` rồi `return`.
 

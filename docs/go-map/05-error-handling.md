@@ -45,7 +45,7 @@ mọi lỗi khác     ──────────────▶ 500 INTERNAL
 - **Custom `Is`** để bản sao do `WithDetails` tạo ra vẫn khớp sentinel: [`apperr.go:46`](../../internal/platform/apperr/apperr.go#L46).
 - **Map sang HTTP** ở một chỗ duy nhất: [`internal/platform/httpx/httpx.go:41`](../../internal/platform/httpx/httpx.go#L41).
 - **Sentinel nghiệp vụ**: `ErrInsufficientFunds` ở [`internal/ledger/domain/domain.go:66`](../../internal/ledger/domain/domain.go#L66).
-- **Đổi lỗi hạ tầng thành lỗi nghiệp vụ**: `errors.Is(err, pgx.ErrNoRows)` thành `ErrAccountNotFound` ở [`internal/ledger/service.go:84`](../../internal/ledger/service.go#L84).
+- **Đổi lỗi hạ tầng thành lỗi nghiệp vụ**: `errors.Is(err, pgx.ErrNoRows)` thành `ErrAccountNotFound` ở [`internal/ledger/service.go:86`](../../internal/ledger/service.go#L86).
 - **Đọc mã lỗi Postgres** bằng `errors.As(err, &pgErr)`: [`internal/platform/db/db.go:98`](../../internal/platform/db/db.go#L98).
 - **Gom nhiều lỗi** khi validate config: `errors.Join` trong [`config.Load`](../../internal/platform/config/config.go#L38).
 - **Lỗi làm rollback transaction**: callback trong `db.WithTx` trả `err != nil` thì toàn bộ bị rollback ([`db.go:44`](../../internal/platform/db/db.go#L44)). Đây là "exception làm rollback" kiểu Go.
