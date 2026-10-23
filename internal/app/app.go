@@ -41,9 +41,11 @@ type Modules struct {
 func NewModules(pool *pgxpool.Pool, clk clock.Clock) *Modules {
 	l := ledger.NewService(pool, clk)
 	w := wallet.NewService(pool, l)
+	i := identity.NewService(pool, clk)
 	return &Modules{
 		Ledger:       l,
 		Wallet:       w,
+		Identity:     i,
 		Payment:      payment.NewService(pool, clk, l, w, idempotency.NewStore(pool, clk), outbox.NewWriter(pool, clk)),
 		Notification: notification.NewService(),
 	}

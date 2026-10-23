@@ -39,7 +39,7 @@ var customers = []struct {
 	{
 		"Nguyễn Phúc Huy",
 		uuid.MustParse("0199a000-0000-7000-8000-00000000000b"),
-		"0869856211",
+		"0987635422",
 		date.Date{Year: 2000, Month: 6, Day: 5},
 	},
 }
