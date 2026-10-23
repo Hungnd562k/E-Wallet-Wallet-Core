@@ -36,3 +36,6 @@ go.work.sum
 private/
 
 .vscode
+
+.claude/*
+AGENTS.md
