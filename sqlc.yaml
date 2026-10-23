@@ -60,3 +60,10 @@ sql:
         <<: *gen
         package: outboxstore
         out: internal/platform/outbox/outboxstore
+  - engine: postgresql
+    schema: [migrations/0005_identity_init.up.sql]
+    queries: internal/identity/store/queries.sql
+    gen:
+      go:
+        <<: *gen
+        out: internal/identity/store
