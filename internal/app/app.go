@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/identity"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/ledger"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/notification"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/payment"
@@ -30,6 +31,7 @@ import (
 
 // Modules holds the constructed module services.
 type Modules struct {
+	Identity     *identity.Service
 	Ledger       *ledger.Service
 	Wallet       *wallet.Service
 	Payment      *payment.Service

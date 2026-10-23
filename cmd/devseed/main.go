@@ -13,21 +13,35 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/app"
+	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/identity"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/ledger"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/clock"
+	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/date"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/db"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/id"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/wallet"
 )
 
-const initialBalance = 1_000_000 // VND
+const initialBalance = 10_000_000 // VND
 
 var customers = []struct {
-	name string
-	id   uuid.UUID
+	name  string
+	id    uuid.UUID
+	phone string
+	Dob   date.Date
 }{
-	{"alice", uuid.MustParse("0199a000-0000-7000-8000-00000000000a")},
-	{"bob", uuid.MustParse("0199a000-0000-7000-8000-00000000000b")},
+	{
+		"Nguyễn Đức Hưng",
+		uuid.MustParse("0199a000-0000-7000-8000-00000000000a"),
+		"0869856211",
+		date.Date{Year: 2000, Month: 6, Day: 5},
+	},
+	{
+		"Nguyễn Phúc Huy",
+		uuid.MustParse("0199a000-0000-7000-8000-00000000000b"),
+		"0869856211",
+		date.Date{Year: 2000, Month: 6, Day: 5},
+	},
 }
 
 func main() {
@@ -46,6 +60,10 @@ func run(ctx context.Context) error {
 	m := app.NewModules(pool, clock.Real{})
 
 	for _, c := range customers {
+		err := ensureIdentityCustomer(ctx, m, c.phone)
+		if err != nil {
+			return fmt.Errorf("%s: %w", c.phone, err)
+		}
 		w, err := ensureWallet(ctx, pool, m, c.id)
 		if err != nil {
 			return fmt.Errorf("%s: %w", c.name, err)
@@ -94,4 +112,25 @@ func ensureWallet(ctx context.Context, pool *pgxpool.Pool, m *app.Modules, custo
 		return err
 	})
 	return w, err
+}
+
+// Seed identity.customers + eKYC
+func ensureIdentityCustomer(ctx context.Context, m *app.Modules, phone string) error {
+	c, err := m.Identity.GetCustomerByPhone(ctx, phone)
+	if err == nil {
+		return nil // already seeded
+	}
+	// Create
+	err = m.Identity.Create(ctx, identity.CustomerCommand{
+		Id:       c.Id,
+		Phone:    c.Phone,
+		FullName: c.FullName,
+		Dob:      c.Dob,
+	})
+
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
