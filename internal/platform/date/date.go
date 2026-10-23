@@ -27,8 +27,12 @@ func TimeToDate(t time.Time) Date {
 	}
 }
 
-// TODO: need test.
-// Convert time.time to pgtype.Date
+// DateToTime converts a Date to midnight UTC of that day.
+func DateToTime(d Date) time.Time {
+	return time.Date(d.Year, time.Month(d.Month), d.Day, 0, 0, 0, 0, time.UTC)
+}
+
+// TimeToPgTypeDate converts t to pgtype.Date. The zero time maps to SQL NULL.
 func TimeToPgTypeDate(t time.Time) pgtype.Date {
-	return pgtype.Date{Time: t, Valid: true}
+	return pgtype.Date{Time: t, Valid: !t.IsZero()}
 }

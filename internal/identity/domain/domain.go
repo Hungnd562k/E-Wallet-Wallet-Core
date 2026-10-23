@@ -10,6 +10,7 @@ type ONBOARDING string
 const (
 	OnboardingRegistered ONBOARDING = "REGISTERED"
 	OnboardingPending    ONBOARDING = "KYC_PENDING"
+	OnboardingVerified   ONBOARDING = "KYC_VERIFIED"
 )
 
 type KYC_STATUS string

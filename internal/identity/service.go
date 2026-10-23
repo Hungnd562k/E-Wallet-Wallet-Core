@@ -30,20 +30,31 @@ var (
 	ErrInvalidPhoneNumber = apperr.New(apperr.KindInvalid, "INVALID_PHONE_NUMBER", "Invalid phone number")
 )
 
-// CustomerCommand is the INPUT command of create or update customer
+type OnboardingStatus = domain.ONBOARDING
+
+const (
+	OnboardingRegistered = domain.OnboardingRegistered
+	OnboardingPending    = domain.OnboardingPending
+	OnboardingVerified   = domain.OnboardingVerified
+)
+
+// CustomerCommand is the INPUT command of create or update customer.
+// A zero Id gets a new UUIDv7; an empty OnboardingStatus means REGISTERED.
 type CustomerCommand struct {
-	Id       uuid.UUID
-	Phone    string
-	FullName string
-	Dob      time.Time
+	Id               uuid.UUID
+	Phone            string
+	FullName         string
+	Dob              time.Time
+	OnboardingStatus OnboardingStatus
 }
 
 // Customer is the OUTPUT of query customer
 type Customer struct {
-	Id       uuid.UUID
-	Phone    string
-	FullName string
-	Dob      time.Time
+	Id               uuid.UUID
+	Phone            string
+	FullName         string
+	Dob              time.Time
+	OnboardingStatus OnboardingStatus
 }
 
 type Service struct {
@@ -61,50 +72,75 @@ func (s *Service) queries(ctx context.Context) *store.Queries {
 }
 
 // TODO: need test.
-// Get Customer by phone number
+// GetCustomerByPhone returns the customer with this phone, whatever its
+// onboarding status; callers decide which statuses they accept.
 func (s *Service) GetCustomerByPhone(ctx context.Context, phone string) (Customer, error) {
-	c, err := s.queries(ctx).GetCustomerByPhone(ctx, phone)
+	normalized := domain.NormalizePhone(phone)
+	if normalized == "" {
+		return Customer{}, ErrInvalidPhoneNumber
+	}
+	c, err := s.queries(ctx).GetCustomerByPhone(ctx, normalized)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Customer{}, ErrNotFound
 	}
-	if c.OnboardingStatus != string(domain.OnboardingRegistered) {
-		return Customer{}, ErrNotActive
+	if err != nil {
+		return Customer{}, fmt.Errorf("get customer by phone: %w", err)
 	}
-
 	return toCustomer(c), nil
 }
 
 // TODO: need test.
-// Create new customer
+// Create inserts a new customer. It joins the transaction in ctx, if any.
 func (s *Service) Create(ctx context.Context, customerCommand CustomerCommand) error {
 	phone := domain.NormalizePhone(customerCommand.Phone)
 	if phone == "" {
 		return ErrInvalidPhoneNumber
 	}
+	customerID := customerCommand.Id
+	if customerID == uuid.Nil {
+		customerID = id.New()
+	}
+	status := customerCommand.OnboardingStatus
+	if status == "" {
+		status = OnboardingRegistered
+	}
 	now := s.clock.Now()
 	err := s.queries(ctx).InsertCustomer(ctx, store.InsertCustomerParams{
-		ID:               id.New(),
-		Phone:            customerCommand.Phone,
+		ID:               customerID,
+		Phone:            phone,
 		PhoneVerifiedAt:  now,
-		OnboardingStatus: "",
-		FullName:         &customerCommand.FullName,
+		OnboardingStatus: string(status),
+		FullName:         nilIfEmpty(customerCommand.FullName),
 		DateOfBirth:      date.TimeToPgTypeDate(customerCommand.Dob),
 		CreatedAt:        now,
 		UpdatedAt:        now,
 		Version:          1,
 	})
 	if err != nil {
-		return fmt.Errorf("InsertCustomer failed: %s", err)
+		return fmt.Errorf("insert customer: %w", err)
 	}
 
 	return nil
 }
 
 func toCustomer(r store.IdentityCustomer) Customer {
-	return Customer{
-		Id:       r.ID,
-		Phone:    r.Phone,
-		FullName: *r.FullName,
-		Dob:      r.DateOfBirth.Time,
+	c := Customer{
+		Id:               r.ID,
+		Phone:            r.Phone,
+		OnboardingStatus: OnboardingStatus(r.OnboardingStatus),
 	}
+	if r.FullName != nil {
+		c.FullName = *r.FullName
+	}
+	if r.DateOfBirth.Valid {
+		c.Dob = r.DateOfBirth.Time
+	}
+	return c
+}
+
+func nilIfEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
