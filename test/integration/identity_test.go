@@ -49,3 +49,52 @@ func TestCreateCustomer(t *testing.T) {
 		t.Errorf("Invalid Onboarding status")
 	}
 }
+
+func TestCreateInvalidPhone(t *testing.T) {
+	e := newEnv(t)
+	phone := "gsdfg"
+	ctx := context.Background()
+	err := e.modules.Identity.Create(ctx, identity.CustomerCommand{Id: uuid.Nil,
+		Phone:            phone,
+		FullName:         "John Doe",
+		Dob:              time.Now(),
+		OnboardingStatus: "",
+	})
+
+	if err != identity.ErrInvalidPhoneNumber {
+		t.Errorf("Expect ErrInvalidPhoneNumber error!")
+	}
+}
+
+func TestGetCustomerFromPhoneNotReal(t *testing.T) {
+	e := newEnv(t)
+	phone := "fascasdcfasd"
+	ctx := context.Background()
+	_, err := e.modules.Identity.GetCustomerByPhone(ctx, phone)
+
+	if err != identity.ErrInvalidPhoneNumber {
+		t.Errorf("Expect ErrInvalidPhoneNumber error!")
+	}
+}
+
+// Phone not found
+func TestPhoneNotFound(t *testing.T) {
+	e := newEnv(t)
+	phone := newPhone()
+	ctx := context.Background()
+	err := e.modules.Identity.Create(ctx, identity.CustomerCommand{Id: id.New(),
+		Phone:            phone,
+		FullName:         "John Doe",
+		Dob:              time.Now(),
+		OnboardingStatus: identity.OnboardingPending,
+	})
+
+	if err != nil {
+		t.Fatalf("Create failed %v", err)
+	}
+
+	_, err = e.modules.Identity.GetCustomerByPhone(ctx, "23452345")
+	if err != identity.ErrInvalidPhoneNumber {
+		t.Errorf("Expect ErrInvalidPhoneNumber error!")
+	}
+}
