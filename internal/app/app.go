@@ -72,7 +72,7 @@ func NewAPIHandler(pool *pgxpool.Pool, m *Modules, authn auth.Authenticator) htt
 
 	r.Group(func(r chi.Router) {
 		r.Use(auth.Middleware(authn))
-		paymenthttp.NewHandler(m.Payment).Routes(r)
+		paymenthttp.NewHandler(m.Payment, m.Identity).Routes(r)
 		wallethttp.NewHandler(m.Wallet, m.Ledger).Routes(r)
 	})
 	return r
