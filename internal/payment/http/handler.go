@@ -9,9 +9,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 
-	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/identity"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/payment"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/apperr"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/auth"
@@ -22,15 +20,11 @@ import (
 const headerIdempotencyKey = "Idempotency-Key"
 
 type Handler struct {
-	svc         *payment.Service
-	identitySvc *identity.Service
+	svc *payment.Service
 }
 
-func NewHandler(svc *payment.Service, identitySvc *identity.Service) *Handler {
-	return &Handler{
-		svc:         svc,
-		identitySvc: identitySvc,
-	}
+func NewHandler(svc *payment.Service) *Handler {
+	return &Handler{svc: svc}
 }
 
 // Routes mounts the customer-facing payment endpoints. The router must already
@@ -69,22 +63,16 @@ func (h *Handler) createTransfer(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	var walletId uuid.UUID
 	if req.Recipient.Phone != "" {
 		// TODO(identity): resolve recipient by phone once the identity module exists.
-		i, err := h.identitySvc.GetCustomerByPhone(r.Context(), req.Recipient.Phone)
-		if err != nil {
-			httpx.WriteError(w, r, err)
-			return
-		}
-
-		// Ví chưa active trả ra lỗi gì?
-		if i.OnboardingStatus != identity.OnboardingVerified {
-			httpx.WriteError(w, r, identity.ErrNotActive)
-		}
-		walletId = i.Id
+		httpx.WriteError(w, r, apperr.New(apperr.KindUnprocessable, "NOT_SUPPORTED_YET", "recipient.phone is not supported yet, use recipient.wallet_id"))
+		return
 	}
-	recipient := walletId
+	recipient, err := id.Parse(id.Wallet, req.Recipient.WalletID)
+	if err != nil {
+		httpx.WriteError(w, r, apperr.Invalid("recipient.wallet_id is invalid"))
+		return
+	}
 
 	p, err := h.svc.Transfer(r.Context(), payment.TransferCommand{
 		CustomerID:        customer.ID,

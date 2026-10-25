@@ -26,7 +26,7 @@ import (
 
 var (
 	ErrNotFound           = apperr.New(apperr.KindNotFound, "CUSTOMER_NOT_FOUND", "Could not found customer's information")
-	ErrNotActive          = apperr.New(apperr.KindInvalid, "UNVERIFIED_CUSTOMER", "Inactive customer")
+	ErrNotActive          = apperr.New(apperr.KindInvalid, "UNVERIFIED_CUSTOMER", "Customer has not been verified yet")
 	ErrInvalidPhoneNumber = apperr.New(apperr.KindInvalid, "INVALID_PHONE_NUMBER", "Invalid phone number")
 )
 
