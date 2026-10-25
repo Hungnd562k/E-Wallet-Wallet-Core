@@ -1,8 +1,7 @@
 package domain
 
 import (
-	"fmt"
-
+	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/apperr"
 	"github.com/google/uuid"
 )
 
@@ -72,30 +71,30 @@ const (
 // Must const-ize returned errors.
 func (entry Entry) Validate() error {
 	if entry.Action == "" {
-		return fmt.Errorf("action could not be empty")
+		return apperr.Invalid("action could not be empty")
 	}
 
 	// Resource's values could not be empty
 	if entry.ResourceType == "" {
-		return fmt.Errorf("resource_type could not be empty")
+		return apperr.Invalid("resource_type could not be empty")
 	}
 
 	if entry.ResourceId == "" {
-		return fmt.Errorf("resource_id could not be empty")
+		return apperr.Invalid("resource_id could not be empty")
 	}
 
 	actorType := ActorType(entry.ActorType)
 	if !actorType.isValidActorType() {
-		return fmt.Errorf("actor_type is invalid")
+		return apperr.Invalid("actor_type is invalid")
 	}
 
 	outcome := Outcome(entry.OutCome)
 	if !outcome.isValidOutcome() {
-		return fmt.Errorf("outcome is invalid")
+		return apperr.Invalid("outcome is invalid")
 	}
 
 	if actorType == Staff && entry.Reason == "" {
-		return fmt.Errorf("require reason for staff")
+		return apperr.Invalid("require reason for staff")
 	}
 
 	return nil
