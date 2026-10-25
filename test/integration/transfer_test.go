@@ -152,6 +152,7 @@ func TestConcurrentCrossTransfers(t *testing.T) {
 	if balA+balB != 200_000 {
 		t.Errorf("money created or destroyed: A+B = %d", balA+balB)
 	}
+	assertLedgerConsistent(t)
 }
 
 // TestConcurrentSameKey sends one logical request many times at once: exactly

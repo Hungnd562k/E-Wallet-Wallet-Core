@@ -67,7 +67,7 @@ func TestCounterClosure(t *testing.T) {
 }
 
 func TestMasker(t *testing.T) {
-	t.Skip("bài tập: implement Masker then delete this line")
+	// t.Skip("bài tập: implement Masker then delete this line")
 	if got := Masker()("call +84901234567 now"); got != "call +8490****567 now" {
 		t.Errorf("got %q", got)
 	}

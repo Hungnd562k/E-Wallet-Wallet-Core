@@ -36,7 +36,7 @@ Chương này nối mọi khái niệm trước lại với nhau. Mở từng li
    - Tìm ví nguồn của customer, rồi `domain.Transfer.Validate()`. Đây là luật thuần, không cần DB.
    - *(Chỗ TODO cho `authz` và `limit`: [dòng 178](../../internal/payment/service.go#L178).)*
    - `wallets.LockActive` ([dòng 181](../../internal/payment/service.go#L181)): `SELECT … FOR UPDATE` cả hai ví theo thứ tự id và kiểm tra cả hai đều `ACTIVE`.
-   - `ledger.Post` ([dòng 188](../../internal/payment/service.go#L188) → [`ledger/service.go:116`](../../internal/ledger/service.go#L116)):
+   - `ledger.Post` ([dòng 188](../../internal/payment/service.go#L188) → [`ledger/service.go:118`](../../internal/ledger/service.go#L118)):
      - validate D = C;
      - lock các account theo thứ tự id;
      - insert transaction và entries;

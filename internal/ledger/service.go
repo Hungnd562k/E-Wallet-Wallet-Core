@@ -44,6 +44,8 @@ var (
 	ErrInsufficientFunds = domain.ErrInsufficientFunds
 	ErrAccountNotFound   = apperr.New(apperr.KindNotFound, "LEDGER_ACCOUNT_NOT_FOUND", "ledger account not found")
 	errNotInTx           = errors.New("ledger: Post must run inside db.WithTx")
+	ErrAccountClosed     = apperr.New(apperr.KindUnprocessable, "LEDGER_ACCOUNT_CLOSED", "ledger account is closed")
+	ErrCurrencyMismatch  = apperr.New(apperr.KindUnprocessable, "CURRENCY_MISMATCH", "account currency differs from posting currency")
 )
 
 type Service struct {
@@ -135,10 +137,12 @@ func (s *Service) Post(ctx context.Context, p Posting) (uuid.UUID, error) {
 	for i := range rows {
 		acc := &rows[i]
 		if acc.Status != "OPEN" {
-			return uuid.Nil, fmt.Errorf("account %s is %s", acc.Code, acc.Status)
+			return uuid.Nil, ErrAccountClosed.WithDetails(map[string]any{"account": acc.Code})
 		}
 		if acc.Currency != p.Currency {
-			return uuid.Nil, fmt.Errorf("account %s currency %s, posting %s", acc.Code, acc.Currency, p.Currency)
+			return uuid.Nil, ErrCurrencyMismatch.WithDetails(map[string]any{
+				"account": acc.Code, "account_currency": acc.Currency, "posting_currency": p.Currency,
+			})
 		}
 		accounts[acc.ID] = acc
 	}

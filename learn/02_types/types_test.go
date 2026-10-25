@@ -65,10 +65,33 @@ func TestGroupByStatus(t *testing.T) {
 }
 
 func TestFilter(t *testing.T) {
-	t.Skip("bài tập: implement Filter then delete this line")
+	//t.Skip("bài tập: implement Filter then delete this line")
 	got := Filter([]Wallet{{ID: "a", Balance: 10}, {ID: "b", Balance: 100}}, 50)
 	if len(got) != 1 || got[0].ID != "b" {
 		t.Errorf("got %v", got)
+	}
+}
+
+func TestFilterGeneric(t *testing.T) {
+	// Case struct Wallet
+	got := Filter([]Wallet{{ID: "a", Balance: 10}, {ID: "b", Balance: 100}}, 50)
+	if len(got) != 1 || got[0].ID != "b" {
+		t.Errorf("got %v", got)
+	}
+
+	got = Filter(make([]Wallet, 0, 0), 1)
+	if len(got) != 0 {
+		t.Errorf("Expected result would be empty slice")
+	}
+
+	// Case pure number
+	gotAny := FilterGeneric([]int16{5, 6, 2, 1, 8, 2}, func(n int16) bool {
+		return n%2 == 0
+	})
+	for _, v := range gotAny {
+		if v%2 != 0 {
+			t.Errorf("Expected even but got odd number %v", v)
+		}
 	}
 }
 

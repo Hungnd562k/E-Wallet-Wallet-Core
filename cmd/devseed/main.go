@@ -13,21 +13,37 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/app"
+	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/identity"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/ledger"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/clock"
+	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/date"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/db"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/id"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/wallet"
 )
 
-const initialBalance = 1_000_000 // VND
+const initialBalance = 10_000_000 // VND
 
-var customers = []struct {
-	name string
-	id   uuid.UUID
-}{
-	{"alice", uuid.MustParse("0199a000-0000-7000-8000-00000000000a")},
-	{"bob", uuid.MustParse("0199a000-0000-7000-8000-00000000000b")},
+type seedCustomer struct {
+	name  string
+	id    uuid.UUID
+	phone string
+	Dob   date.Date
+}
+
+var customers = []seedCustomer{
+	{
+		"Nguyễn Đức Hưng",
+		uuid.MustParse("0199a000-0000-7000-8000-00000000000a"),
+		"0869856211",
+		date.Date{Year: 2000, Month: 6, Day: 5},
+	},
+	{
+		"Nguyễn Phúc Huy",
+		uuid.MustParse("0199a000-0000-7000-8000-00000000000b"),
+		"0987635422",
+		date.Date{Year: 2000, Month: 6, Day: 5},
+	},
 }
 
 func main() {
@@ -46,7 +62,17 @@ func run(ctx context.Context) error {
 	m := app.NewModules(pool, clock.Real{})
 
 	for _, c := range customers {
-		w, err := ensureWallet(ctx, pool, m, c.id)
+		// One transaction per customer: identity, wallet, activation and top-up
+		// all join it, so a failure leaves nothing half-seeded for the next run.
+		var w wallet.Wallet
+		err := db.WithTx(ctx, pool, func(ctx context.Context) error {
+			if err := ensureIdentityCustomer(ctx, m, c); err != nil {
+				return err
+			}
+			var err error
+			w, err = ensureWallet(ctx, pool, m, c.id)
+			return err
+		})
 		if err != nil {
 			return fmt.Errorf("%s: %w", c.name, err)
 		}
@@ -94,4 +120,26 @@ func ensureWallet(ctx context.Context, pool *pgxpool.Pool, m *app.Modules, custo
 		return err
 	})
 	return w, err
+}
+
+// ensureIdentityCustomer creates the eKYC-verified identity.customers row for c,
+// with the same id the wallet uses as customer_id.
+func ensureIdentityCustomer(ctx context.Context, m *app.Modules, c seedCustomer) error {
+	existing, err := m.Identity.GetCustomerByPhone(ctx, c.phone)
+	if err == nil {
+		if existing.Id != c.id {
+			return fmt.Errorf("phone %s already belongs to customer %s", c.phone, existing.Id)
+		}
+		return nil // already seeded
+	}
+	if !errors.Is(err, identity.ErrNotFound) {
+		return err
+	}
+	return m.Identity.Create(ctx, identity.CustomerCommand{
+		Id:               c.id,
+		Phone:            c.phone,
+		FullName:         c.name,
+		Dob:              date.DateToTime(c.Dob),
+		OnboardingStatus: identity.OnboardingVerified,
+	})
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/identity"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/ledger"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/notification"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/payment"
@@ -25,10 +26,12 @@ import (
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/idempotency"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/outbox"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/wallet"
+	wallethttp "github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/wallet/http"
 )
 
 // Modules holds the constructed module services.
 type Modules struct {
+	Identity     *identity.Service
 	Ledger       *ledger.Service
 	Wallet       *wallet.Service
 	Payment      *payment.Service
@@ -38,9 +41,11 @@ type Modules struct {
 func NewModules(pool *pgxpool.Pool, clk clock.Clock) *Modules {
 	l := ledger.NewService(pool, clk)
 	w := wallet.NewService(pool, l)
+	i := identity.NewService(pool, clk)
 	return &Modules{
 		Ledger:       l,
 		Wallet:       w,
+		Identity:     i,
 		Payment:      payment.NewService(pool, clk, l, w, idempotency.NewStore(pool, clk), outbox.NewWriter(pool, clk)),
 		Notification: notification.NewService(),
 	}
@@ -67,7 +72,8 @@ func NewAPIHandler(pool *pgxpool.Pool, m *Modules, authn auth.Authenticator) htt
 
 	r.Group(func(r chi.Router) {
 		r.Use(auth.Middleware(authn))
-		paymenthttp.NewHandler(m.Payment).Routes(r)
+		paymenthttp.NewHandler(m.Payment, m.Identity).Routes(r)
+		wallethttp.NewHandler(m.Wallet, m.Ledger).Routes(r)
 	})
 	return r
 }

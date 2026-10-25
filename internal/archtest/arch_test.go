@@ -1,5 +1,6 @@
 // Package archtest enforces the module dependency rules of architecture §4.3
 // by inspecting the real import graph (`go list -json ./...`).
+// Test kiến trúc import ở đây, chưa biết sử dụng kiểu gì
 package archtest
 
 import (

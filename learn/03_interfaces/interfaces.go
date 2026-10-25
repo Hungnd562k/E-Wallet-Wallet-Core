@@ -5,6 +5,7 @@ package interfaces
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"time"
 )
 
@@ -83,6 +84,10 @@ func Counter() func() int {
 func Masker() func(string) string {
 	return func(s string) string {
 		// TODO(bài tập): hint — regexp.MustCompile(`\+84\d{9}`).ReplaceAllStringFunc
+		s = regexp.MustCompile(`\+84\d{9}`).ReplaceAllStringFunc(s, func(s string) string {
+			return s[:5] + "****" + s[9:]
+		})
+
 		return s
 	}
 }

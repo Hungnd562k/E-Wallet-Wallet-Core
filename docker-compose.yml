@@ -3,6 +3,7 @@
 services:
   postgres:
     image: postgres:16-alpine
+    container_name: e-wallet-core-db
     environment:
       POSTGRES_USER: wallet
       POSTGRES_PASSWORD: wallet
@@ -16,8 +17,41 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+  e-wallet-core-api:
+    image: e-wallet-core-api:latest
+    container_name: e-wallet-core-api
+    environment:
+      APP_ENV: local
+      HTTP_ADDR: :8080
+      DATABASE_URL: postgres://wallet:wallet@e-wallet-core-db:5432/wallet?sslmode=disable
+      LOG_LEVEL: debug
+      WORKER_ID: worker-1
+      OUTBOX_BATCH_SIZE: 20
+      OUTBOX_POLL_INTERVAL: 1s
+      OUTBOX_MAX_ATTEMPTS: 10
+    ports:
+      - 8080:8080
+    depends_on:
+      - postgres
+  e-wallet-core-worker:
+    image: e-wallet-core-worker:latest
+    container_name: e-wallet-core-worker
+    environment:
+      APP_ENV: local
+      HTTP_ADDR: :8080
+      DATABASE_URL: postgres://wallet:wallet@e-wallet-core-db:5432/wallet?sslmode=disable
+      LOG_LEVEL: debug
+      WORKER_ID: worker-1
+      OUTBOX_BATCH_SIZE: 20
+      OUTBOX_POLL_INTERVAL: 1s
+      OUTBOX_MAX_ATTEMPTS: 10
+    depends_on:
+      - postgres
 
 volumes:
   wallet-pg:
 
-# test protected branch
+networks:
+  wallet-net:
+    external: true
+    name: e-wallet-network

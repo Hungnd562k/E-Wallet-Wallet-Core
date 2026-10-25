@@ -15,6 +15,7 @@ type Status int
 
 const (
 	Active Status = iota // iota counts 0, 1, 2… inside a const block
+	Suspended
 	Frozen
 	Closed
 )
@@ -23,6 +24,8 @@ func (s Status) String() string {
 	switch s {
 	case Active:
 		return "ACTIVE"
+	case Suspended:
+		return "SUSPENDED"
 	case Frozen:
 		return "FROZEN"
 	case Closed:
@@ -80,5 +83,28 @@ func GroupByStatus(ws []Wallet) map[Status][]string {
 // Filter[T any](xs []T, keep func(T) bool) []T and use it here.
 func Filter(ws []Wallet, min VND) []Wallet {
 	// TODO(bài tập)
-	return nil
+	// Ví dụ:
+	// make([]Wallet, 2) -> mảng có sẵn 2 phần tử, len 2, cap 2, sẵn 2 phần tử default value
+	// make([]Wallet, 0) -> len 0, cap 0
+	// make([]Wallet, 0, 2) -> len 0, cap 2, ko có sẵn 2 phần tử default value
+	out := make([]Wallet, 0, len(ws)+1)
+	for _, w := range ws {
+		if w.Balance < min {
+			continue
+		}
+		out = append(out, w)
+	}
+	return out
+}
+
+// Filter but for generic type
+func FilterGeneric[T any](xs []T, keep func(T) bool) []T {
+	out := make([]T, 0, len(xs)-1)
+	for _, v := range xs {
+		if !keep(v) {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
 }

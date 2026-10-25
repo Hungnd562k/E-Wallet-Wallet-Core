@@ -66,6 +66,9 @@ test-one: ## Run one test: make test-one PKG=./internal/ledger/... RUN='TestVali
 cover: ## Coverage report for unit tests (opens coverage.html)
 	$(GO) test -short -coverprofile=coverage.out ./internal/... && $(GO) tool cover -html=coverage.out -o coverage.html
 
+cover-integration: ## Coverage report for unit + integration tests (needs Docker)
+	$(GO) test -count=1 -coverpkg=./internal/... -coverprofile=coverage.integration.out ./internal/... ./test/integration && $(GO) tool cover -html=coverage.integration.out -o coverage.integration.html
+
 lint: ## gofmt + go vet (+ golangci-lint via Docker if available)
 	@test -z "$$(gofmt -l . | tee /dev/stderr)" || (echo "run: make fmt" && exit 1)
 	$(GO) vet ./...
