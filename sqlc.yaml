@@ -66,4 +66,11 @@ sql:
     gen:
       go:
         <<: *gen
-        out: internal/identity/store
+        out: internal/audit/store
+  - engine: postgresql
+    schema: [migrations/0001_platform_init.up.sql, migrations/0007_audit_init.up.sql]
+    queries: internal/audit/store/queries.sql
+    gen:
+      go:
+        <<: *gen
+        out: internal/audit/store

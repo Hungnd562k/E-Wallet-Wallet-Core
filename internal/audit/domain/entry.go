@@ -50,6 +50,13 @@ type Entry struct {
 	Metadata     map[string]any `json:"metadata"`
 }
 
+type Action string
+
+const (
+	Payment_Transfer     Action = "Payment.Transfer"
+	Wallet_Status_Change Action = "Wallet.Status.Change"
+)
+
 type ActorType string
 
 const (
