@@ -38,6 +38,19 @@ func redact(_ []string, a slog.Attr) slog.Attr {
 	return a
 }
 
+// Not sure what I'm doing
+func IsSensitiveKey(key string) bool {
+	words := strings.FieldsFunc(strings.ToLower(key), func(r rune) bool {
+		return r == '_' || r == '-' || r == '.'
+	})
+	for _, w := range words {
+		if slices.Contains(sensitiveKeys, w) {
+			return true
+		}
+	}
+	return false
+}
+
 func isSensitive(key string) bool {
 	words := strings.FieldsFunc(strings.ToLower(key), func(r rune) bool {
 		return r == '_' || r == '-' || r == '.'
