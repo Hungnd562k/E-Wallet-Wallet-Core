@@ -2,33 +2,12 @@
 // INSERT/SELECT on this schema. Schema: audit. BR-64, 71.
 package audit
 
-import "github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/observability"
+import "github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/audit/domain"
 
-const redactedValue = "[REDACTED]"
+// TODO(ST-3): Service.Record, which always sanitizes Entry.Metadata before INSERT.
 
-func Sanitize(m map[string]any) map[string]any {
-	for key, value := range m {
-		if observability.IsSensitiveKey(key) {
-			m[key] = redactedValue
-			continue
-		}
+// SanitizeMetadata returns a copy of m with sensitive values hidden (BR-71).
+func SanitizeMetadata(m map[string]any) map[string]any { return domain.SanitizeMetadata(m) }
 
-		m[key] = sanitizeValue(value)
-	}
-
-	return m
-}
-
-func sanitizeValue(value any) any {
-	switch v := value.(type) {
-	case map[string]any:
-		return Sanitize(v)
-	case []any:
-		for i, item := range v {
-			v[i] = sanitizeValue(item)
-		}
-		return v
-	default:
-		return value
-	}
-}
+// MetadataFrom turns a struct into sanitized metadata using its json tags.
+func MetadataFrom(v any) (map[string]any, error) { return domain.MetadataFrom(v) }
