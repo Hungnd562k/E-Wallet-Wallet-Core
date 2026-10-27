@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/audit"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/identity"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/ledger"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/notification"
@@ -36,18 +37,21 @@ type Modules struct {
 	Wallet       *wallet.Service
 	Payment      *payment.Service
 	Notification *notification.Service
+	Audit        *audit.Service
 }
 
 func NewModules(pool *pgxpool.Pool, clk clock.Clock) *Modules {
 	l := ledger.NewService(pool, clk)
 	w := wallet.NewService(pool, l)
 	i := identity.NewService(pool, clk)
+	a := audit.NewService(pool, clk)
 	return &Modules{
 		Ledger:       l,
 		Wallet:       w,
 		Identity:     i,
 		Payment:      payment.NewService(pool, clk, l, w, idempotency.NewStore(pool, clk), outbox.NewWriter(pool, clk)),
 		Notification: notification.NewService(),
+		Audit:        a,
 	}
 }
 
