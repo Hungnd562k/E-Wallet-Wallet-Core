@@ -1,0 +1,23 @@
+# AI PR review (advisory). The workflow itself lives in the docs repo so every
+# code repo shares it: Hungnd562k/E-Wallet/.github/workflows/ai-review.yml.
+# Runs when a PR opens or becomes ready, or when the owner comments "@claude review".
+name: AI review
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  review:
+    uses: Hungnd562k/E-Wallet/.github/workflows/ai-review.yml@main
+    with:
+      component: wallet-core
+    secrets: inherit
