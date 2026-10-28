@@ -15,10 +15,6 @@ func TestValidEntry(t *testing.T) {
 		ResourceId:   "test resource_id",
 		OutCome:      string(Success),
 		Reason:       "",
-		RequestId:    "",
-		TraceId:      "",
-		Ip:           "",
-		UserAgent:    "",
 		Metadata:     nil,
 	}
 
@@ -37,10 +33,6 @@ func TestStaffNotComeWithReason(t *testing.T) {
 		ResourceId:   "test resource_id",
 		OutCome:      string(Success),
 		Reason:       "",
-		RequestId:    "",
-		TraceId:      "",
-		Ip:           "",
-		UserAgent:    "",
 		Metadata:     nil,
 	}
 

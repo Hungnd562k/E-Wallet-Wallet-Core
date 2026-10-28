@@ -4,18 +4,17 @@ import (
 	"github.com/google/uuid"
 )
 
+// Entry is what a caller knows about an audited action. request_id, trace_id,
+// ip and user_agent are not here: Record reads them from the context, so a
+// caller can neither forget nor fake them.
 type Entry struct {
 	ActorType    string         `json:"actor_type"`
-	ActorId      uuid.UUID      `json:"actor_id"`
+	ActorId      uuid.UUID      `json:"actor_id"` // uuid.Nil is stored as NULL (SYSTEM, unauthenticated)
 	Action       string         `json:"action"`
 	ResourceType string         `json:"resource_type"`
 	ResourceId   string         `json:"resource_id"`
 	OutCome      string         `json:"outcome"`
-	Reason       string         `json:"reason"`
-	RequestId    string         `json:"request_id"`
-	TraceId      string         `json:"trace_id"`
-	Ip           string         `json:"ip"`
-	UserAgent    string         `json:"user_agent"`
+	Reason       string         `json:"reason"` // "" is stored as NULL; required for STAFF
 	Metadata     map[string]any `json:"metadata"`
 }
 
@@ -38,8 +37,9 @@ const (
 type Action string
 
 const (
-	Payment_Transfer     Action = "Payment.Transfer"
-	Wallet_Status_Change Action = "Wallet.Status.Change"
+	// Lowercase and dotted, like the examples in erd §4.12 (wallet.freeze, kyc.image.view).
+	Payment_Transfer     Action = "payment.transfer"
+	Wallet_Status_Change Action = "wallet.status.change"
 )
 
 type ActorType string

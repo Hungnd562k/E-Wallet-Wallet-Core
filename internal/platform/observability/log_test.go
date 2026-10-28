@@ -75,3 +75,19 @@ func TestLoggerMasksCCCDInFreeText(t *testing.T) {
 		t.Errorf("numeric amount should not be masked: %s", out)
 	}
 }
+
+func TestLoggerAddsTraceID(t *testing.T) {
+	var buf bytes.Buffer
+	log := NewLogger(&buf, slog.LevelInfo)
+	ctx := WithTraceID(WithRequestID(context.Background(), "req_1"), "4bf92f3577b34da6a3ce929d0e0e4736")
+
+	log.InfoContext(ctx, "hello")
+
+	var rec map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
+		t.Fatal(err)
+	}
+	if rec["trace_id"] != "4bf92f3577b34da6a3ce929d0e0e4736" || rec["request_id"] != "req_1" {
+		t.Errorf("record = %v, want request_id and trace_id", rec)
+	}
+}

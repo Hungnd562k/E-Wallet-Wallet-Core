@@ -5,25 +5,82 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/observability"
 )
 
-const HeaderRequestID = "X-Request-Id"
+const (
+	HeaderRequestID   = "X-Request-Id"
+	HeaderTraceparent = "traceparent"
+)
+
+// maxUserAgentLen caps what a client can make us store in every audit row.
+const maxUserAgentLen = 512
 
 // RequestID accepts the client's X-Request-Id (if sane) or generates one, stores it
-// in the context and echoes it back.
+// in the context and echoes it back. It does the same for the W3C trace id taken
+// from the traceparent header, so logs and audit rows always carry both.
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get(HeaderRequestID)
 		if id == "" || len(id) > 128 {
 			id = newRequestID()
 		}
+		traceID, ok := parseTraceparent(r.Header.Get(HeaderTraceparent))
+		if !ok {
+			traceID = newTraceID()
+		}
 		w.Header().Set(HeaderRequestID, id)
-		next.ServeHTTP(w, r.WithContext(observability.WithRequestID(r.Context(), id)))
+		ctx := observability.WithRequestID(r.Context(), id)
+		ctx = observability.WithTraceID(ctx, traceID)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// ClientInfo stores the caller's IP and user agent in the context for audit rows.
+// The IP is the TCP peer address; X-Forwarded-For is not trusted because any
+// client can set it. Behind a reverse proxy, put a trusted real-IP middleware first.
+func ClientInfo(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			ip = r.RemoteAddr
+		}
+		ua := r.UserAgent()
+		if len(ua) > maxUserAgentLen {
+			ua = ua[:maxUserAgentLen]
+		}
+		ctx := observability.WithClient(r.Context(), observability.Client{IP: ip, UserAgent: ua})
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// parseTraceparent returns the trace id of a W3C traceparent header
+// ("00-<32 hex trace id>-<16 hex parent id>-<2 hex flags>").
+func parseTraceparent(h string) (string, bool) {
+	parts := strings.Split(h, "-")
+	if len(parts) != 4 || len(parts[0]) != 2 || parts[0] == "ff" ||
+		len(parts[1]) != 32 || len(parts[2]) != 16 || len(parts[3]) != 2 {
+		return "", false
+	}
+	traceID := parts[1]
+	if !isLowerHex(traceID) || traceID == strings.Repeat("0", 32) {
+		return "", false
+	}
+	return traceID, true
+}
+
+func isLowerHex(s string) bool {
+	for _, c := range s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // Recover turns a panic into a 500 with the uniform body instead of killing the connection.
@@ -70,4 +127,10 @@ func newRequestID() string {
 	var b [12]byte
 	_, _ = rand.Read(b[:])
 	return "req_" + hex.EncodeToString(b[:])
+}
+
+func newTraceID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }
