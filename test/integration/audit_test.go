@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/audit/domain"
@@ -161,5 +162,40 @@ func TestInsertInValidAuditRecord(t *testing.T) {
 }
 
 func TestInsertValidAuditRecord(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
 
+	entry := domain.Entry{
+		ActorType:    string(domain.Staff),
+		ActorId:      id.New(),
+		Action:       "test action",
+		ResourceType: "resource_type",
+		ResourceId:   "resource_id",
+		OutCome:      string(domain.Success),
+		Reason:       "This is the reason",
+		RequestId:    "request_id",
+		TraceId:      "trace_id",
+		Ip:           "ip",
+		UserAgent:    "user_agent",
+		Metadata: map[string]any{
+			"amount":   1_000_000,
+			"pin":      "123456",
+			"password": "hungndtest123!@#",
+			"phone":    "0869856211",
+		},
+	}
+
+	err := db.WithTx(ctx, pool, func(ctx context.Context) error {
+		fmt.Printf("entry before sanitize: %#v \n", entry)
+		err := e.modules.Audit.Record(ctx, entry)
+		if err != nil {
+			t.Fatalf("Unexpected 1 error: %v", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("Unexpected 2 error: %v", err)
+	}
 }

@@ -5,13 +5,13 @@ package audit
 import (
 	"context"
 	"encoding/json"
-	"time"
 
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/audit/domain"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/audit/store"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/clock"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/db"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/id"
+	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/observability"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -52,9 +52,23 @@ func (s *Service) Record(ctx context.Context, entry domain.Entry) error {
 			return err
 		}
 
+		redactedMsg, err := domain.MetadataFrom(entry)
+		if err != nil {
+			return err
+		}
+
+		data, err := json.Marshal(redactedMsg)
+		if err != nil {
+			return err
+		}
+
+		if err := json.Unmarshal(data, &entry); err != nil {
+			return err
+		}
+
 		s.queries(ctx).InsertAuditLogs(ctx, store.InsertAuditLogsParams{
 			ID:           id.New(),
-			OccurredAt:   time.Now(),
+			OccurredAt:   s.clock.Now(),
 			ActorType:    entry.ActorType,
 			ActorID:      &entry.ActorId,
 			Action:       entry.Action,
@@ -62,7 +76,7 @@ func (s *Service) Record(ctx context.Context, entry domain.Entry) error {
 			ResourceID:   entry.ResourceId,
 			Outcome:      entry.OutCome,
 			Reason:       &entry.Reason,
-			RequestID:    entry.RequestId,
+			RequestID:    observability.RequestID(ctx),
 			TraceID:      entry.TraceId,
 			Ip:           &entry.Ip,
 			UserAgent:    &entry.UserAgent,

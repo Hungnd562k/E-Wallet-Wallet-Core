@@ -12,6 +12,32 @@ import (
 	"github.com/google/uuid"
 )
 
+const getAuditLogsById = `-- name: GetAuditLogsById :one
+SELECT id, occurred_at, actor_type, actor_id, action, resource_type, resource_id, outcome, reason, request_id, trace_id, ip, user_agent, metadata FROM audit.audit_logs WHERE id = $1
+`
+
+func (q *Queries) GetAuditLogsById(ctx context.Context, id uuid.UUID) (AuditAuditLog, error) {
+	row := q.db.QueryRow(ctx, getAuditLogsById, id)
+	var i AuditAuditLog
+	err := row.Scan(
+		&i.ID,
+		&i.OccurredAt,
+		&i.ActorType,
+		&i.ActorID,
+		&i.Action,
+		&i.ResourceType,
+		&i.ResourceID,
+		&i.Outcome,
+		&i.Reason,
+		&i.RequestID,
+		&i.TraceID,
+		&i.Ip,
+		&i.UserAgent,
+		&i.Metadata,
+	)
+	return i, err
+}
+
 const insertAuditLogs = `-- name: InsertAuditLogs :exec
 INSERT INTO audit.audit_logs (id, occurred_at, actor_type, actor_id, action, resource_type, resource_id, outcome, reason, request_id, trace_id, ip, user_agent, metadata) 
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
