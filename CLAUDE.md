@@ -12,6 +12,8 @@ The design is the source of truth. It lives in the sibling repo `../E-Wallet/doc
 - `business-rules.md`: the `BR-xx` business rules cited in code.
 - `fsd/`: use cases (`UC-xx`) and the shared behaviours `CF-xx`.
 
+`REVIEW.md` holds the wallet-core rules for the AI PR reviewer (`.github/workflows/ai-review.yml`, shared workflow and policy in the docs repo, `docs/review-process.md`). CI (`.github/workflows/ci.yml`) runs `gofmt`, `go vet`, golangci-lint on new code, unit and integration tests with `-race`, and Redocly lint.
+
 `api/openapi.yaml` is the source of truth for the wallet-core API contract; the design docs link to it instead of keeping their own copy. Lint it with `npx @redocly/cli lint` (config in `redocly.yaml`).
 
 The owner is new to Go and comes from C#. `docs/go-map/` is a Vietnamese learning map that anchors Go concepts to `file:line` in this repo, and `learn/` holds runnable exercises. **If you move code that docs/go-map links to, update the line anchors.** Write docs in Vietnamese and code comments in English.

@@ -1,0 +1,60 @@
+# CI for wallet-core (SCRUM-15 / T-02): lint, unit + archtest, integration
+# tests with -race (SM-05) and OpenAPI lint (SM-06).
+name: CI
+
+on:
+  push:
+    branches: [development, main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then echo "$out"; echo "run: make fmt"; exit 1; fi
+      - name: go vet
+        run: go vet ./...
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.12.0
+          # Two staticcheck findings predate CI; only new code is held to it.
+          only-new-issues: true
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Unit + archtest + learn
+        run: go test -short ./...
+      - name: Integration (testcontainers Postgres, -race)
+        run: go test -race -count=1 ./test/...
+
+  openapi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Redocly lint
+        run: npx --yes @redocly/cli@2.71.2 lint
