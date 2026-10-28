@@ -58,7 +58,7 @@ func NewModules(pool *pgxpool.Pool, clk clock.Clock) *Modules {
 // NewAPIHandler builds the HTTP handler of wallet-api.
 func NewAPIHandler(pool *pgxpool.Pool, m *Modules, authn auth.Authenticator) http.Handler {
 	r := chi.NewRouter()
-	r.Use(httpx.RequestID, httpx.Recover, httpx.AccessLog)
+	r.Use(httpx.RequestID, httpx.ClientInfo, httpx.Recover, httpx.AccessLog)
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})

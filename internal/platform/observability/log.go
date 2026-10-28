@@ -22,7 +22,7 @@ var sensitiveKeys = []string{"cccd", "pin", "otp", "token", "authorization", "pa
 const redacted = "[REDACTED]"
 
 // NewLogger returns a JSON logger that redacts sensitive attributes and adds
-// request_id from the context to every record.
+// request_id and trace_id from the context to every record.
 func NewLogger(w io.Writer, level slog.Level) *slog.Logger {
 	h := slog.NewJSONHandler(w, &slog.HandlerOptions{
 		Level:       level,
@@ -108,6 +108,9 @@ type contextHandler struct{ slog.Handler }
 func (h contextHandler) Handle(ctx context.Context, r slog.Record) error {
 	if id := RequestID(ctx); id != "" {
 		r.AddAttrs(slog.String("request_id", id))
+	}
+	if id := TraceID(ctx); id != "" {
+		r.AddAttrs(slog.String("trace_id", id))
 	}
 	return h.Handler.Handle(ctx, r)
 }
