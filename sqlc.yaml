@@ -61,12 +61,12 @@ sql:
         package: outboxstore
         out: internal/platform/outbox/outboxstore
   - engine: postgresql
-    schema: [migrations/0005_identity_init.up.sql]
+    schema: [migrations/0001_platform_init.up.sql, migrations/0005_identity_init.up.sql]
     queries: internal/identity/store/queries.sql
     gen:
       go:
         <<: *gen
-        out: internal/audit/store
+        out: internal/identity/store
   - engine: postgresql
     schema: [migrations/0001_platform_init.up.sql, migrations/0007_audit_init.up.sql]
     queries: internal/audit/store/queries.sql
