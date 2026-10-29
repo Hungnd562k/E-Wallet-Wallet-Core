@@ -27,7 +27,7 @@ const maxUserAgentLen = 512
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get(HeaderRequestID)
-		if id == "" || len(id) > 128 {
+		if !validRequestID(id) {
 			id = newRequestID()
 		}
 		traceID, ok := parseTraceparent(r.Header.Get(HeaderTraceparent))
@@ -121,6 +121,23 @@ type statusWriter struct {
 func (w *statusWriter) WriteHeader(code int) {
 	w.status = code
 	w.ResponseWriter.WriteHeader(code)
+}
+
+// validRequestID reports whether a client's X-Request-Id is safe to echo back and
+// store: 1–128 characters from [A-Za-z0-9._-] (architecture §10, AIR-1).
+func validRequestID(id string) bool {
+	if id == "" || len(id) > 128 {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '.', c == '_', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func newRequestID() string {

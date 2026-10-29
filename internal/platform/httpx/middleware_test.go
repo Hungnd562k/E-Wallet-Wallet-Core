@@ -115,6 +115,32 @@ func TestRequestIDKeepsValidUTF8(t *testing.T) {
 	}
 }
 
+func TestRequestIDReplacesUnsafeClientID(t *testing.T) {
+	for name, id := range map[string]string{
+		"invalid UTF-8":    "req_\xff",
+		"space":            "req 1",
+		"too long":         strings.Repeat("a", 129),
+		"header injection": "req_1\r\nX-Evil: 1",
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/", nil)
+			r.Header[HeaderRequestID] = []string{id}
+			w := httptest.NewRecorder()
+			var got string
+			RequestID(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				got = observability.RequestID(r.Context())
+			})).ServeHTTP(w, r)
+
+			if got == id || !strings.HasPrefix(got, "req_") {
+				t.Errorf("request_id = %q, want a generated id", got)
+			}
+			if echoed := w.Header().Get(HeaderRequestID); echoed != got {
+				t.Errorf("echoed X-Request-Id = %q, want %q", echoed, got)
+			}
+		})
+	}
+}
+
 // TestServerPassesInvalidUTF8Header shows the bytes really reach the handler
 // from a raw TCP client, so the cases above are not only a test artefact.
 func TestServerPassesInvalidUTF8Header(t *testing.T) {
