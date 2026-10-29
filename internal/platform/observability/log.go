@@ -98,7 +98,7 @@ func WithRequestID(ctx context.Context, id string) context.Context {
 
 func RequestID(ctx context.Context) string {
 	id, _ := ctx.Value(requestIDKey).(string)
-	return id
+	return ReplaceInvalidUTF8(id)
 }
 
 // contextHandler decorates records with values carried in the context.

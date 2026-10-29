@@ -1,6 +1,10 @@
 package observability
 
-import "context"
+import (
+	"context"
+	"strings"
+	"unicode/utf8"
+)
 
 type traceIDKey struct{}
 
@@ -33,5 +37,47 @@ func WithClient(ctx context.Context, c Client) context.Context {
 // an HTTP request (worker, jobs).
 func ClientFrom(ctx context.Context) Client {
 	c, _ := ctx.Value(clientKey{}).(Client)
+	c.UserAgent = toValidLengthHeader(c.UserAgent)
 	return c
+}
+
+// Độ dài tối đa của User-Agent
+const USER_AGENT_MAX_LENGTH = 512 // bytes
+
+// Nếu User-Agent có length by bytes vượt 512 bytes, return 1 chuỗi được cắt bớt về độ dài cho phép.
+// Phải cắt theo ký tự thay vì byte.
+func toValidLengthHeader(s string) string {
+	s = ReplaceInvalidUTF8(s)
+
+	if len(s) <= USER_AGENT_MAX_LENGTH {
+		return s
+	}
+
+	s = s[:USER_AGENT_MAX_LENGTH]
+
+	for !utf8.ValidString(s) {
+		s = s[:len(s)-1]
+	}
+
+	return s
+}
+
+// Replace ký tự không phải UTF-8 hợp lệ
+func ReplaceInvalidUTF8(s string) string {
+	var b strings.Builder
+
+	for len(s) > 0 {
+		r, size := utf8.DecodeRuneInString(s)
+
+		if r == utf8.RuneError && size == 1 {
+			b.WriteRune(utf8.RuneError)
+			s = s[1:]
+			continue
+		}
+
+		b.WriteString(s[:size])
+		s = s[size:]
+	}
+
+	return b.String()
 }

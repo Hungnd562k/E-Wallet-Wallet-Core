@@ -282,3 +282,31 @@ func TestAuditRollsBackWithTransaction(t *testing.T) {
 		t.Errorf("audit row survived a rolled-back transaction")
 	}
 }
+
+// AIR-1: Postgres rejects invalid UTF-8 in text columns ("invalid byte
+// sequence for encoding UTF8"), so a client-controlled user agent must not
+// be able to make Record fail and roll back the business transaction.
+func TestAuditRecordSurvivesInvalidUTF8UserAgent(t *testing.T) {
+	e := newEnv(t)
+	requestID := "req_" + id.New().String()
+	ctx := observability.WithRequestID(context.Background(), requestID)
+	ctx = observability.WithClient(ctx, observability.Client{IP: "203.0.113.7", UserAgent: "EWalletApp/1.0 \xff"})
+
+	err := db.WithTx(ctx, pool, func(ctx context.Context) error {
+		return e.modules.Audit.Record(ctx, audit.Entry{
+			ActorType:    string(audit.ActorStaff),
+			ActorId:      id.New(),
+			Action:       string(audit.ActionWalletStatusChange),
+			ResourceType: "wallet",
+			ResourceId:   "wal_test",
+			OutCome:      string(audit.OutcomeSuccess),
+			Reason:       "AIR-1 reproduction",
+		})
+	})
+	if err != nil {
+		t.Fatalf("record with invalid UTF-8 user agent: %v", err)
+	}
+	if _, n := auditRowByRequestID(t, requestID); n != 1 {
+		t.Fatalf("want 1 audit row, got %d", n)
+	}
+}
