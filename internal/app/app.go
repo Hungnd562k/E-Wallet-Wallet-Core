@@ -49,7 +49,7 @@ func NewModules(pool *pgxpool.Pool, clk clock.Clock) *Modules {
 		Ledger:       l,
 		Wallet:       w,
 		Identity:     i,
-		Payment:      payment.NewService(pool, clk, l, w, idempotency.NewStore(pool, clk), outbox.NewWriter(pool, clk)),
+		Payment:      payment.NewService(pool, clk, l, w, idempotency.NewStore(pool, clk), outbox.NewWriter(pool, clk), a),
 		Notification: notification.NewService(),
 		Audit:        a,
 	}
