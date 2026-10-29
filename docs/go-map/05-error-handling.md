@@ -24,7 +24,7 @@ Mẫu `if err != nil` sẽ lặp lại rất nhiều. Đó là chủ ý: bạn n
 | `AggregateException` | `errors.Join(errs...)` |
 | Exception bất ngờ | `panic`, **chỉ** dành cho bug hoặc trạng thái không thể xảy ra |
 | `try/finally` | `defer` |
-| Global exception middleware | `recover()` trong middleware ([`httpx.Recover`](../../internal/platform/httpx/middleware.go#L30)) |
+| Global exception middleware | `recover()` trong middleware ([`httpx.Recover`](../../internal/platform/httpx/middleware.go#L87)) |
 
 ## Ba loại lỗi
 

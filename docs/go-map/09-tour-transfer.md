@@ -9,7 +9,7 @@ Chương này nối mọi khái niệm trước lại với nhau. Mở từng li
 ## 1. Middleware (theo thứ tự)
 
 1. `httpx.RequestID`: nhận hoặc sinh `X-Request-Id`, lưu vào `ctx`.
-2. `httpx.Recover` ([`middleware.go:30`](../../internal/platform/httpx/middleware.go#L30)): panic biến thành 500.
+2. `httpx.Recover` ([`middleware.go:87`](../../internal/platform/httpx/middleware.go#L87)): panic biến thành 500.
 3. `httpx.AccessLog`: mỗi request ghi một dòng log.
 4. `auth.Middleware(DevHeaderAuth{})` ([`auth.go:32`](../../internal/platform/auth/auth.go#L32)): đọc `X-Dev-Customer-Id`, đặt `auth.Customer` vào ctx. Không hợp lệ thì trả 401.
 

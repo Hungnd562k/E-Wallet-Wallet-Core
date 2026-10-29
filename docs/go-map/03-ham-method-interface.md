@@ -46,7 +46,7 @@ Thứ tự khởi tạo hiện rõ ngay trong code, và quên một dependency l
 - **Interface strategy**: `Authenticator` ở [`internal/platform/auth/auth.go:25`](../../internal/platform/auth/auth.go#L25). Hiện tại chỉ có `DevHeaderAuth`; sau này thêm JWT thì chỉ cần đổi một dòng trong `cmd/api`.
 - **Kiểu hàm làm interface**: `type Handler func(ctx, Message) error` ở [`internal/platform/outbox/dispatcher.go:22`](../../internal/platform/outbox/dispatcher.go#L22). Truyền **method value** `m.Notification.HandlePaymentSucceeded` vào `Register` ở [`internal/app/app.go:76`](../../internal/app/app.go#L76). Method value là method đã gắn sẵn receiver, giống delegate trong C#.
 - **Middleware là hàm trả về hàm**: `func Middleware(a Authenticator) func(http.Handler) http.Handler` ở [`auth.go:32`](../../internal/platform/auth/auth.go#L32).
-- **Embedding để decorate**: `statusWriter` nhúng `http.ResponseWriter` và chỉ ghi đè `WriteHeader`: [`internal/platform/httpx/middleware.go:59`](../../internal/platform/httpx/middleware.go#L59).
+- **Embedding để decorate**: `statusWriter` nhúng `http.ResponseWriter` và chỉ ghi đè `WriteHeader`: [`internal/platform/httpx/middleware.go:116`](../../internal/platform/httpx/middleware.go#L116).
 - **Hợp đồng phía consumer**: `notification` tự khai báo struct payload mà nó cần, thay vì import `payment`: [`internal/notification/service.go:27`](../../internal/notification/service.go#L27).
 
 ## Bài tập
