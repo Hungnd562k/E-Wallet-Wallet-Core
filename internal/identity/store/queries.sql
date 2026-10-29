@@ -27,4 +27,4 @@ VALUES ($1, $2, $3, $4, $5, $6, $7);
 -- name: AuthenCredential :one
 SELECT 
     customer_id, pin_hash, pin_failed_count, pin_locked_until, pin_hard_locked, pin_updated_at, version
-FROM identity.credentials WHERE pin_hash = $1;
+FROM identity.credentials WHERE customer_id = $1;

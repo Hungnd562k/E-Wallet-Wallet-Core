@@ -132,3 +132,61 @@ type IdentityRefreshToken struct {
 	// Set when the token is revoked
 	RevokedAt *time.Time
 }
+
+type PlatformIdempotencyKey struct {
+	ScopeType      string
+	ScopeID        uuid.UUID
+	Key            string
+	RequestHash    []byte
+	Endpoint       string
+	Status         string
+	ResponseStatus *int32
+	ResponseBody   []byte
+	ResourceID     *uuid.UUID
+	LockedUntil    *time.Time
+	ExpiresAt      time.Time
+	CreatedAt      time.Time
+}
+
+type PlatformJobRun struct {
+	ID           uuid.UUID
+	JobName      string
+	ScheduledFor time.Time
+	Status       string
+	Instance     string
+	StartedAt    time.Time
+	FinishedAt   *time.Time
+	Summary      []byte
+	Error        *string
+}
+
+type PlatformOutboxEvent struct {
+	ID            uuid.UUID
+	AggregateType string
+	AggregateID   uuid.UUID
+	EventType     string
+	Payload       []byte
+	Headers       []byte
+	Status        string
+	Attempts      int32
+	AvailableAt   time.Time
+	LockedUntil   *time.Time
+	LockedBy      *string
+	LastError     *string
+	CreatedAt     time.Time
+	ProcessedAt   *time.Time
+}
+
+type PlatformProcessedEvent struct {
+	Consumer    string
+	EventID     uuid.UUID
+	ProcessedAt time.Time
+}
+
+type PlatformSetting struct {
+	Key         string
+	Value       []byte
+	Description string
+	UpdatedBy   *uuid.UUID
+	UpdatedAt   time.Time
+}
