@@ -20,7 +20,7 @@ info:
     ## Quy ước chung
     - JSON `snake_case`. Thời gian RFC 3339 (UTC). ID public là chuỗi có prefix (`cus_`, `wal_`, `txn_`, `lnk_`, `ord_`, `chl_`, `kyc_`, `dsp_`…).
     - **Tiền**: `amount` là số nguyên `int64` theo đồng, luôn đi kèm `currency = "VND"`. Không bao giờ dùng số thực.
-    - **Correlation**: client nên gửi `X-Request-Id` (UUID); server luôn trả lại `X-Request-Id` và có `request_id` trong body lỗi.
+    - **Correlation**: client nên gửi `X-Request-Id` (UUID); server luôn trả lại `X-Request-Id` và có `request_id` trong body lỗi. Server chỉ nhận id gồm `[A-Za-z0-9._-]`, dài 1–128 ký tự; id khác bị bỏ qua và server sinh id mới (không trả lỗi).
     - **Phân trang**: keyset — query `cursor` + `limit`; response có `next_cursor` (null khi hết).
 
     ## Idempotency (bắt buộc cho mọi lệnh tạo giao dịch)
