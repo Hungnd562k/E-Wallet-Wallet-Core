@@ -19,9 +19,9 @@ const modulePath = "github.com/Hungnd562k/E-Wallet-Wallet-Core"
 // import (architecture §4.3 diagram). Every module may import platform.
 // Adding an edge here is an architecture decision: update the docs too.
 var allowed = map[string][]string{
-	"payment":        {"ledger", "limit", "wallet", "authz", "banklink", "merchant"},
+	"payment":        {"ledger", "limit", "wallet", "authz", "banklink", "merchant", "audit"},
 	"reconciliation": {"ledger", "banklink", "payment"},
-	"wallet":         {"ledger"},
+	"wallet":         {"ledger", "audit"},
 	"kyc":            {"identity"},
 	"banklink":       {"identity"},
 	"authz":          {"identity"},
