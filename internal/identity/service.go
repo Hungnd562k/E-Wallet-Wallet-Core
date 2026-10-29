@@ -144,3 +144,32 @@ func nilIfEmpty(s string) *string {
 	}
 	return &s
 }
+
+// Tạo mới thông tin credential (PIN)
+func (s *Service) CreateCredentials(ctx context.Context, c store.IdentityCredential) error {
+	err := s.queries(ctx).CreateNewCredential(ctx, store.CreateNewCredentialParams{
+		CustomerID:     c.CustomerID,
+		PinHash:        c.PinHash,
+		PinFailedCount: 0,
+		PinLockedUntil: c.PinLockedUntil,
+		PinHardLocked:  false,
+		PinUpdatedAt:   nil,
+		Version:        1,
+	})
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Lấy thông tin Credential (PIN)
+func (s *Service) GetCustomerById(ctx context.Context, id uuid.UUID) (store.IdentityCredential, error) {
+	i, err := s.queries(ctx).AuthenCredential(ctx, id)
+	if err != nil {
+		return store.IdentityCredential{}, err
+	}
+
+	return i, nil
+}
