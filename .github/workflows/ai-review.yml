@@ -1,11 +1,14 @@
-# AI PR review (advisory). The workflow itself lives in the docs repo so every
-# code repo shares it: Hungnd562k/E-Wallet/.github/workflows/ai-review.yml.
-# Runs when a PR opens or becomes ready, or when the owner comments "@claude review".
+# AI PR review. The workflow itself lives in the docs repo so every code repo
+# shares it: Hungnd562k/E-Wallet/.github/workflows/ai-review.yml.
+# Runs automatically only for PRs into uat/v1.0.0, where a P0/P1 finding fails
+# the job and blocks the merge (ADR-23). On any other PR the owner can comment
+# "@claude review" for an advisory review.
 name: AI review
 
 on:
   pull_request:
-    types: [opened, reopened, ready_for_review]
+    branches: [uat/v1.0.0]
+    types: [opened, reopened, ready_for_review, synchronize]
   issue_comment:
     types: [created]
 
@@ -20,4 +23,5 @@ jobs:
     uses: Hungnd562k/E-Wallet/.github/workflows/ai-review.yml@main
     with:
       component: wallet-core
+      blocking: ${{ github.event_name == 'pull_request' }}
     secrets: inherit
