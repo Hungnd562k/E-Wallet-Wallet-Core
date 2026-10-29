@@ -1,10 +1,12 @@
 package httpx
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/observability"
 )
@@ -76,5 +78,61 @@ func TestClientInfo(t *testing.T) {
 	}
 	if len(c.UserAgent) != maxUserAgentLen || !strings.HasPrefix(c.UserAgent, "EWalletApp/1.0") {
 		t.Errorf("user agent not truncated to %d: len %d", maxUserAgentLen, len(c.UserAgent))
+	}
+}
+
+// AIR-1: the user agent and request id go into audit rows (Postgres text), so
+// they must stay valid UTF-8 whatever bytes the client sends.
+func TestClientInfoKeepsUserAgentValidUTF8(t *testing.T) {
+	tests := map[string]string{
+		// 511 ASCII bytes + "ệ" (3 bytes): cutting at byte 512 splits the rune.
+		"multi-byte rune across the cap": strings.Repeat("a", maxUserAgentLen-1) + "ệ",
+		// Go's server accepts obs-text (bytes >= 0x80) in header values.
+		"invalid byte": "EWalletApp/1.0 \xff",
+	}
+	for name, ua := range tests {
+		t.Run(name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/", nil)
+			r.Header.Set("User-Agent", ua)
+
+			got := observability.ClientFrom(capture(t, ClientInfo, r).Context()).UserAgent
+			if !utf8.ValidString(got) {
+				t.Errorf("user agent is not valid UTF-8: %q", got)
+			}
+			if len(got) > maxUserAgentLen {
+				t.Errorf("user agent len %d > %d", len(got), maxUserAgentLen)
+			}
+		})
+	}
+}
+
+func TestRequestIDKeepsValidUTF8(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set(HeaderRequestID, "req_\xff")
+
+	if got := observability.RequestID(capture(t, RequestID, r).Context()); !utf8.ValidString(got) {
+		t.Errorf("request_id is not valid UTF-8: %q", got)
+	}
+}
+
+// TestServerPassesInvalidUTF8Header shows the bytes really reach the handler
+// from a raw TCP client, so the cases above are not only a test artefact.
+func TestServerPassesInvalidUTF8Header(t *testing.T) {
+	seen := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- r.UserAgent()
+	}))
+	defer srv.Close()
+
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.Write([]byte("GET / HTTP/1.1\r\nHost: x\r\nUser-Agent: bad\xff\r\nConnection: close\r\n\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	if ua := <-seen; utf8.ValidString(ua) {
+		t.Fatalf("expected the server to pass invalid UTF-8 through, got %q", ua)
 	}
 }
