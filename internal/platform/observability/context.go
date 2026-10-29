@@ -4,6 +4,9 @@ import (
 	"context"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/id"
+	"github.com/google/uuid"
 )
 
 type traceIDKey struct{}
@@ -19,7 +22,7 @@ func WithTraceID(ctx context.Context, id string) context.Context {
 // TraceID returns the trace id stored by WithTraceID, or "" when there is none.
 func TraceID(ctx context.Context) string {
 	id, _ := ctx.Value(traceIDKey{}).(string)
-	return id
+	return returnNewTraceIDOrNot(id)
 }
 
 // Client describes who sent the request, as seen by the server.
@@ -62,6 +65,7 @@ func toValidLengthHeader(s string) string {
 	return s
 }
 
+// Replace ký tự không phải UTF-8 hợp lệ
 func ReplaceInvalidUTF8(s string) string {
 	var b strings.Builder
 
@@ -79,4 +83,13 @@ func ReplaceInvalidUTF8(s string) string {
 	}
 
 	return b.String()
+}
+
+// request-id hợp lệ đi qua hàm này sẽ giữ nguyên
+// Nếu không sẽ gen ra uuid mới
+func returnNewTraceIDOrNot(requestId string) string {
+	if err := uuid.Validate(requestId); err != nil {
+		return id.New().String()
+	}
+	return requestId
 }
