@@ -1,40 +1,30 @@
 package domain
 
 import (
-	"crypto/rand"
-	"encoding/base64"
-
-	"golang.org/x/crypto/argon2"
+	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/platform/apperr"
+	"github.com/alexedwards/argon2id"
 )
 
-type PinError string
-
-const (
-	InvalidPIN PinError = "INVALID_PIN"
+var (
+	ErrInvalidPin = apperr.New(apperr.KindForbidden, "INVALID_PIN", "Invalid PIN")
 )
 
 // Hash PIN sử dụng argon2id :D
 func Hash_PIN(pin string) (string, error) {
-	salt := make([]byte, 16)
-	if _, err := rand.Read(salt); err != nil {
-		return "", nil
+	return argon2id.CreateHash(pin, argon2id.DefaultParams)
+}
+
+// Compare pin and hash pin :D .
+// TODO: Tìm hiểu về Poison Hash, phép tính gây tốn tài nguyên, benchmark login đồng thời.
+func Verify(pin string, encodedHash string) error {
+	match, err := argon2id.ComparePasswordAndHash(pin, encodedHash)
+	if err != nil {
+		return err
 	}
 
-	const (
-		memory      = 64 * 1024
-		iteration   = 3
-		parallelism = 2
-		keyLength   = 32
-	)
+	if !match {
+		return ErrInvalidPin
+	}
 
-	hash := argon2.IDKey(
-		[]byte(pin),
-		salt,
-		iteration,
-		memory,
-		parallelism,
-		keyLength,
-	)
-
-	return base64.RawStdEncoding.EncodeToString(hash), nil
+	return nil
 }

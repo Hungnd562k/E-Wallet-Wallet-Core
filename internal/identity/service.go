@@ -28,6 +28,7 @@ var (
 	ErrNotFound           = apperr.New(apperr.KindNotFound, "CUSTOMER_NOT_FOUND", "Could not found customer's information")
 	ErrNotActive          = apperr.New(apperr.KindInvalid, "UNVERIFIED_CUSTOMER", "Customer has not been verified yet")
 	ErrInvalidPhoneNumber = apperr.New(apperr.KindInvalid, "INVALID_PHONE_NUMBER", "Invalid phone number")
+	ErrPINNotFound        = apperr.New(apperr.KindNotFound, "PIN_NOT_FOUND", "Could not found custimer's pin")
 )
 
 type OnboardingStatus = domain.ONBOARDING
@@ -161,6 +162,24 @@ func (s *Service) CreateCredentials(ctx context.Context, c store.IdentityCredent
 		return err
 	}
 
+	return nil
+}
+
+// Lấy thông tin credential theo customer-id
+func (s *Service) GetCredentialByCusId(ctx context.Context, customerId uuid.UUID) (*store.IdentityCredential, error) {
+	c, err := s.queries(ctx).AuthenCredential(ctx, customerId)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &c, nil
+}
+
+func (s *Service) UpdatePINByCusId(ctx context.Context, customerId uuid.UUID) error {
 	return nil
 }
 

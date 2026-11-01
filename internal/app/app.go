@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/audit"
+	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/authz"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/identity"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/ledger"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/notification"
@@ -38,6 +39,7 @@ type Modules struct {
 	Payment      *payment.Service
 	Notification *notification.Service
 	Audit        *audit.Service
+	Authz        *authz.Service
 }
 
 func NewModules(pool *pgxpool.Pool, clk clock.Clock) *Modules {
@@ -45,6 +47,7 @@ func NewModules(pool *pgxpool.Pool, clk clock.Clock) *Modules {
 	w := wallet.NewService(pool, l)
 	i := identity.NewService(pool, clk)
 	a := audit.NewService(pool, clk)
+	az := authz.NewService(pool, clk, i)
 	return &Modules{
 		Ledger:       l,
 		Wallet:       w,
@@ -52,6 +55,7 @@ func NewModules(pool *pgxpool.Pool, clk clock.Clock) *Modules {
 		Payment:      payment.NewService(pool, clk, l, w, idempotency.NewStore(pool, clk), outbox.NewWriter(pool, clk), a),
 		Notification: notification.NewService(),
 		Audit:        a,
+		Authz:        az,
 	}
 }
 
