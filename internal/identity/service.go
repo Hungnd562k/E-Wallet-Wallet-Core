@@ -192,3 +192,23 @@ func (s *Service) GetCustomerById(ctx context.Context, id uuid.UUID) (store.Iden
 
 	return i, nil
 }
+
+// Update PIN failed count
+func (s *Service) UpdatePINFailedCount(ctx context.Context, id uuid.UUID) error {
+	err := s.queries(ctx).UpdatePINFailed(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Reset PIN failed for account
+func (s *Service) ResetPINFailedCount(ctx context.Context, id uuid.UUID) error {
+	err := s.queries(ctx).ResetPINFailedCount(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}

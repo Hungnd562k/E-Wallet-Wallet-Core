@@ -151,3 +151,41 @@ func (q *Queries) InsertCustomer(ctx context.Context, arg InsertCustomerParams) 
 	)
 	return err
 }
+
+const resetPINFailedCount = `-- name: ResetPINFailedCount :exec
+UPDATE identity.credentials
+SET
+    pin_failed_count = 0,
+    pin_locked_until = null,
+    pin_locked_until = nil,
+    version = version + 1
+WHERE customer_id = $1
+`
+
+func (q *Queries) ResetPINFailedCount(ctx context.Context, customerID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, resetPINFailedCount, customerID)
+	return err
+}
+
+const updatePINFailed = `-- name: UpdatePINFailed :exec
+UPDATE identity.credentials 
+SET 
+    pin_failed_count = pin_failed_count + 1, 
+    pin_locked_until = CASE 
+        WHEN pin_failed_count + 1 >= 3
+            THEN NOW() + INTERVAL '15 minutes'
+        ELSE pin_locked_until
+    END,
+    pin_hard_locked = CASE
+        WHEN pin_failed_count + 1 >= 5
+            THEN TRUE
+        ELSE pin_hard_locked
+    END,
+    version = version + 1 
+WHERE customer_id = $1
+`
+
+func (q *Queries) UpdatePINFailed(ctx context.Context, customerID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, updatePINFailed, customerID)
+	return err
+}

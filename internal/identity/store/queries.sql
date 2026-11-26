@@ -35,7 +35,7 @@ SET
     pin_failed_count = pin_failed_count + 1, 
     pin_locked_until = CASE 
         WHEN pin_failed_count + 1 >= 3
-            THEN NOW() + INTERNAL '15 minutes'
+            THEN NOW() + INTERVAL '15 minutes'
         ELSE pin_locked_until
     END,
     pin_hard_locked = CASE
@@ -44,4 +44,13 @@ SET
         ELSE pin_hard_locked
     END,
     version = version + 1 
+WHERE customer_id = $1;
+
+-- name: ResetPINFailedCount :exec
+UPDATE identity.credentials
+SET
+    pin_failed_count = 0,
+    pin_locked_until = null,
+    pin_locked_until = nil,
+    version = version + 1
 WHERE customer_id = $1;

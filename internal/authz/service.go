@@ -5,6 +5,8 @@ package authz
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"regexp"
 
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/authz/domain"
@@ -29,6 +31,8 @@ type PIN string
 var (
 	ErrInvalidPin = apperr.New(apperr.KindForbidden, "INVALID_PIN", "Invalid PIN")
 	ErrWrongPin   = apperr.New(apperr.KindInvalid, "WRONG_PIN", "Wrong PIN")
+	ErrPINNotSet  = apperr.New(apperr.KindUnprocessable, "PIN_NOT_SET", "PIN not set")
+	ErrPINLocked  = apperr.New(apperr.KindUnprocessable, "PIN_LOCKED", "PIN locked")
 )
 
 func NewService(pool *pgxpool.Pool, clk clock.Clock, i *identity.Service) *Service {
@@ -67,20 +71,47 @@ func (s *Service) Update_PIN(ctx context.Context, customerId uuid.UUID, currPIN 
 	return nil
 }
 
-// Authenticate PIN :D
+// Authenticate PIN, update biến đếm sau mỗi lần nhập sai PIN.
+// Sai từ 3 lần lock mềm, từ 5 lần lock cứng account.
 func (s *Service) Authz_PIN(ctx context.Context, customerId uuid.UUID, pin PIN) error {
 	c, err := s.i.GetCredentialByCusId(ctx, customerId)
 	if err != nil {
 		return err
 	}
 
-	err = domain.Verify(string(pin), *c.PinHash)
-	// CATCH UP: làm tiếp bắt đầu từ đây, đang dở dang đoạn viết sql update credential khi nhập sai pin, nếu nhập đúng pin thì phải reset
-	if err != nil {
-		// if errors.Is(err, domain.ErrInvalidPin) {
+	// PIN not set
+	if c.PinHash == nil || len(*c.PinHash) == 0 {
+		return ErrPINNotSet
+	}
 
-		// }
+	// PIN locked
+	if c.PinHardLocked {
+		return ErrPINLocked
+	}
+
+	// PIN locked until next retry
+	if c.PinLockedUntil != nil && c.PinLockedUntil.After(s.clock.Now()) {
+		return ErrPINLocked.WithDetails(map[string]any{
+			"locked_until": c.PinLockedUntil,
+		})
+	}
+
+	err = domain.Verify(string(pin), *c.PinHash)
+	if err != nil {
+		// Wrong PIN
+		if errors.Is(err, domain.ErrInvalidPin) {
+			updateErr := s.i.UpdatePINFailedCount(ctx, c.CustomerID)
+			if updateErr != nil {
+				slog.Error("Update failure counter failed", "fatal", updateErr)
+			}
+		}
 		return err
+	}
+	if c.PinFailedCount != 0 {
+		updateErr := s.i.ResetPINFailedCount(ctx, c.CustomerID)
+		if updateErr != nil {
+			slog.Error("Update failure counter failed", "fatal", updateErr)
+		}
 	}
 	return nil
 }
