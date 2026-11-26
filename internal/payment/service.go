@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/audit"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/ledger"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/payment/domain"
 	"github.com/Hungnd562k/E-Wallet-Wallet-Core/internal/payment/store"
@@ -69,6 +70,13 @@ type SucceededEvent struct {
 	OccurredAt     time.Time `json:"occurred_at"`
 }
 
+type AuditMetadata struct {
+	Amount       int64
+	Currency     string
+	SourceWallet uuid.UUID
+	DestWallet   uuid.UUID
+}
+
 // TransferCommand is the input of Transfer. The caller (HTTP layer) has
 // already authenticated CustomerID.
 type TransferCommand struct {
@@ -87,11 +95,12 @@ type Service struct {
 	wallets *wallet.Service
 	idem    *idempotency.Store
 	outbox  *outbox.Writer
+	audit   *audit.Service
 }
 
 func NewService(pool *pgxpool.Pool, clk clock.Clock, l *ledger.Service, w *wallet.Service,
-	idem *idempotency.Store, ob *outbox.Writer) *Service {
-	return &Service{pool: pool, clock: clk, ledger: l, wallets: w, idem: idem, outbox: ob}
+	idem *idempotency.Store, ob *outbox.Writer, a *audit.Service) *Service {
+	return &Service{pool: pool, clock: clk, ledger: l, wallets: w, idem: idem, outbox: ob, audit: a}
 }
 
 func (s *Service) queries(ctx context.Context) *store.Queries {
@@ -258,6 +267,23 @@ func (s *Service) transferInTx(ctx context.Context, cmd TransferCommand) (Paymen
 	if err := s.wallets.TouchActivity(ctx, now, src.ID, dst.ID); err != nil {
 		return Payment{}, fmt.Errorf("touch wallet activity: %w", err)
 	}
+
+	// TODO: SCRUM-78: ST-4 Gắn audit vào chuyển tiền và đổi trạng thái ví + cập nhật archtest
+	err = s.audit.Record(ctx, audit.Entry{
+		ActorType:    string(audit.ActorCustomer),
+		ActorId:      cmd.RecipientWalletID,
+		Action:       string(audit.ActionPaymentTransfer),
+		ResourceType: "",
+		ResourceId:   "",
+		OutCome:      string(audit.OutcomeSuccess),
+		Reason:       cmd.Description,
+		Metadata: map[string]any{
+			"amount":        t.Amount,
+			"currency":      t.Currency,
+			"source_wallet": t.SourceWalletID.String(),
+			"dest_wallet":   t.DestWalletID.String(),
+		},
+	})
 
 	if _, err := s.outbox.Enqueue(ctx, outbox.Event{
 		AggregateType: "payment",

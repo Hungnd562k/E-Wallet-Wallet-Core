@@ -13,6 +13,55 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const authenCredential = `-- name: AuthenCredential :one
+SELECT 
+    customer_id, pin_hash, pin_failed_count, pin_locked_until, pin_hard_locked, pin_updated_at, version
+FROM identity.credentials WHERE customer_id = $1
+`
+
+func (q *Queries) AuthenCredential(ctx context.Context, customerID uuid.UUID) (IdentityCredential, error) {
+	row := q.db.QueryRow(ctx, authenCredential, customerID)
+	var i IdentityCredential
+	err := row.Scan(
+		&i.CustomerID,
+		&i.PinHash,
+		&i.PinFailedCount,
+		&i.PinLockedUntil,
+		&i.PinHardLocked,
+		&i.PinUpdatedAt,
+		&i.Version,
+	)
+	return i, err
+}
+
+const createNewCredential = `-- name: CreateNewCredential :exec
+INSERT INTO identity.credentials (customer_id, pin_hash, pin_failed_count, pin_locked_until, pin_hard_locked, pin_updated_at, version) 
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+`
+
+type CreateNewCredentialParams struct {
+	CustomerID     uuid.UUID
+	PinHash        *string
+	PinFailedCount int32
+	PinLockedUntil *time.Time
+	PinHardLocked  bool
+	PinUpdatedAt   *time.Time
+	Version        int32
+}
+
+func (q *Queries) CreateNewCredential(ctx context.Context, arg CreateNewCredentialParams) error {
+	_, err := q.db.Exec(ctx, createNewCredential,
+		arg.CustomerID,
+		arg.PinHash,
+		arg.PinFailedCount,
+		arg.PinLockedUntil,
+		arg.PinHardLocked,
+		arg.PinUpdatedAt,
+		arg.Version,
+	)
+	return err
+}
+
 const getCustomerById = `-- name: GetCustomerById :one
 select 
     id, phone, phone_verified_at, onboarding_status, full_name, 
@@ -100,5 +149,43 @@ func (q *Queries) InsertCustomer(ctx context.Context, arg InsertCustomerParams) 
 		arg.UpdatedAt,
 		arg.Version,
 	)
+	return err
+}
+
+const resetPINFailedCount = `-- name: ResetPINFailedCount :exec
+UPDATE identity.credentials
+SET
+    pin_failed_count = 0,
+    pin_locked_until = null,
+    pin_locked_until = nil,
+    version = version + 1
+WHERE customer_id = $1
+`
+
+func (q *Queries) ResetPINFailedCount(ctx context.Context, customerID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, resetPINFailedCount, customerID)
+	return err
+}
+
+const updatePINFailed = `-- name: UpdatePINFailed :exec
+UPDATE identity.credentials 
+SET 
+    pin_failed_count = pin_failed_count + 1, 
+    pin_locked_until = CASE 
+        WHEN pin_failed_count + 1 >= 3
+            THEN NOW() + INTERVAL '15 minutes'
+        ELSE pin_locked_until
+    END,
+    pin_hard_locked = CASE
+        WHEN pin_failed_count + 1 >= 5
+            THEN TRUE
+        ELSE pin_hard_locked
+    END,
+    version = version + 1 
+WHERE customer_id = $1
+`
+
+func (q *Queries) UpdatePINFailed(ctx context.Context, customerID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, updatePINFailed, customerID)
 	return err
 }

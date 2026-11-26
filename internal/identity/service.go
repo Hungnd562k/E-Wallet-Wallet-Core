@@ -28,6 +28,7 @@ var (
 	ErrNotFound           = apperr.New(apperr.KindNotFound, "CUSTOMER_NOT_FOUND", "Could not found customer's information")
 	ErrNotActive          = apperr.New(apperr.KindInvalid, "UNVERIFIED_CUSTOMER", "Customer has not been verified yet")
 	ErrInvalidPhoneNumber = apperr.New(apperr.KindInvalid, "INVALID_PHONE_NUMBER", "Invalid phone number")
+	ErrPINNotFound        = apperr.New(apperr.KindNotFound, "PIN_NOT_FOUND", "Could not found custimer's pin")
 )
 
 type OnboardingStatus = domain.ONBOARDING
@@ -143,4 +144,71 @@ func nilIfEmpty(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// Tạo mới thông tin credential (PIN)
+func (s *Service) CreateCredentials(ctx context.Context, c store.IdentityCredential) error {
+	err := s.queries(ctx).CreateNewCredential(ctx, store.CreateNewCredentialParams{
+		CustomerID:     c.CustomerID,
+		PinHash:        c.PinHash,
+		PinFailedCount: 0,
+		PinLockedUntil: c.PinLockedUntil,
+		PinHardLocked:  false,
+		PinUpdatedAt:   nil,
+		Version:        1,
+	})
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Lấy thông tin credential theo customer-id
+func (s *Service) GetCredentialByCusId(ctx context.Context, customerId uuid.UUID) (*store.IdentityCredential, error) {
+	c, err := s.queries(ctx).AuthenCredential(ctx, customerId)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &c, nil
+}
+
+func (s *Service) UpdatePINByCusId(ctx context.Context, customerId uuid.UUID) error {
+	return nil
+}
+
+// Lấy thông tin Credential (PIN)
+func (s *Service) GetCustomerById(ctx context.Context, id uuid.UUID) (store.IdentityCredential, error) {
+	i, err := s.queries(ctx).AuthenCredential(ctx, id)
+	if err != nil {
+		return store.IdentityCredential{}, err
+	}
+
+	return i, nil
+}
+
+// Update PIN failed count
+func (s *Service) UpdatePINFailedCount(ctx context.Context, id uuid.UUID) error {
+	err := s.queries(ctx).UpdatePINFailed(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Reset PIN failed for account
+func (s *Service) ResetPINFailedCount(ctx context.Context, id uuid.UUID) error {
+	err := s.queries(ctx).ResetPINFailedCount(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
